@@ -1,0 +1,74 @@
+#!/usr/bin/perl -w
+
+# This program reads an HTML document as standard input,
+# and prints a nicely indented version on the standard output
+
+use strict;
+use HTML::TreeBuilder;
+use HTML::Element;
+use HTML::Entities;
+        
+binmode(STDOUT, ":utf8");
+binmode(STDIN, ":utf8");
+
+my $depth = $ARGV[0] ? $ARGV[0] : -1;
+my $literal = "script|pre";
+
+my $tree = HTML::TreeBuilder->new();
+$tree->implicit_tags(0);
+$tree->store_declarations(1);
+
+$tree->parse_file(*STDIN);
+
+print "<!doctype html>\n" if $depth == -1;
+
+# the as_HTML function is being a wiseguy about indentation...
+# print $tree->as_HTML(undef, "  ", {});
+&traverse($tree, $depth);
+
+
+sub traverse {
+  my ($node, $depth) = @_;
+  my %attributes = $node->all_external_attr();
+  my @children = $node->content_list();
+  
+  # print this element as html
+  unless ($node->implicit()) {
+    print "  " x $depth;
+    print "<" . $node->tag();
+    for my $key (keys %attributes) {
+      print " $key=\"$attributes{$key}\"";
+    }
+    print ">";
+  }
+  
+  # print the children
+  if (@children) {
+    print "\n" unless $node->tag() =~ /$literal/ or $node->implicit();
+    for my $child (@children) {
+      if (ref $child) {
+        traverse($child, $depth+1);
+      }
+      elsif ($child =~ /[^ ]/) {
+        if ($node->tag() =~ /$literal/) {
+          print "$child";
+          print "</" . $node->tag . ">\n";
+        }
+        else {
+          print "  " x ($depth+1);
+          $child =~ s/^ +//; # remove leading spaces
+          $child =~ s/ +$//; # remove trailing spaces
+          print encode_entities($child) . "\n";
+        }
+      }
+    }
+    unless ($node->tag() =~ /$literal/) {
+      print "  " x $depth unless $node->implicit();
+      print "</" . $node->tag . ">\n" unless $node->implicit();
+    }
+  }
+  else { # no children
+    print "</" . $node->tag . ">\n" unless $node->implicit() or $node->tag() eq "br";
+    print "\n" if $node->tag() eq "br"; # </br>'s break Chrome
+  }
+}

@@ -1,0 +1,23 @@
+#!/usr/bin/awk -f 
+# This program left-justifies text
+
+BEGIN { cols=78 }
+
+{
+for (i=1;i<=NF;i++) {
+  if ( (length(line) + length($i)) > cols ) { 
+    print substr(line,1,(length(line)-1))
+    line=""
+  }
+  line=line""$i" "
+}
+
+if (NF==0 && line!="") {
+  print substr(line,1,(length(line)-1))
+  print ""
+  line=""
+}
+
+}
+
+END { print substr(line,1,(length(line)-1)) }

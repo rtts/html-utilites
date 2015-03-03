@@ -1,0 +1,1387 @@
+#!/usr/bin/perl -w
+
+# This program extracts the actual content of a webpage by
+# finding the part that contains the lowest tag-to-text ratio
+
+use strict;
+use HTML::TreeBuilder;
+
+# tunable number between 0 and 1
+my $TAGTOLERANCE = 0.1;
+
+binmode(STDOUT, ":utf8");
+binmode(STDIN, ":utf8");
+
+my $tree = HTML::TreeBuilder->new_from_file(*STDIN);
+my $ignore = "script|style|comment|declaration";
+my $sumsize = 0;
+my $sumtags = 0;
+my $bestratio = 1;
+my $solution = \$tree;
+my $silent = $ARGV[0] ? 0 : 1;
+my $verbatim = 0;
+
+my $title = $tree->find_by_tag_name("title");
+$title = $title->as_text() if $title;
+$title =~ s/^\s*//;
+$title =~ s/\s*$//;
+$title =~ s/( \| | - ).*//;
+
+# use HTML::Element::traverse to count size and tags
+$tree->traverse( sub {
+  my $node = shift;
+  return unless shift;
+  if (ref $node) {
+    return 0 if $node->tag =~ /$ignore/;
+    $sumtags++;
+  }
+  elsif ($node =~ /\w/) { # i.e., when the text is not just spaces
+    $sumsize += length($node);
+  }
+  return 1;
+});
+
+my $tolerance = $TAGTOLERANCE * $sumtags;
+
+# use my own traversal function to find the solution
+&traverse($tree, 0, 1);
+
+# print the solution tree if requested
+&traverse($$solution, 0, 0) unless $silent;
+
+# output the solution as LaTeX code
+printlatex($solution);
+
+sub traverse {
+  my ($node, $depth, $silent) = @_;
+  return (0,0) if $node->tag =~ /$ignore/;
+
+  my $size = 0;
+  my $tags = 0;
+  my @children = $node->content_list;
+  
+  print "  " x $depth unless $silent;
+  print "<" . $node->tag . ">\n" unless $silent;
+  
+  if (@children) {
+    for my $child ($node->content_list) {
+      if (ref $child) {
+        $tags++;
+        my ($childsize, $childtags) = traverse($child, $depth+1, $silent);
+        $size += $childsize;
+        $tags += $childtags;
+      }
+      elsif ($child =~ /\w/) { # i.e., when the text is not just spaces
+        $size += length($child);
+        print "  " x ($depth+1) unless $silent;
+        print "$child\n" unless $silent;
+      }
+    }
+
+    print "  " x $depth unless $silent;
+    print "</" . $node->tag . "> ($size bytes, $tags tags)\n" unless $silent;
+
+    my $ratio = ($tags + $tolerance) / ($size + 1);
+    if ($ratio < $bestratio) {
+      $bestratio = $ratio;
+      $solution = \$node;
+    }
+    else {
+    }
+  }
+  
+  return $size, $tags;
+}
+
+sub printlatex {
+  my $ref = shift;
+  my %translation = (
+  a  => [ "{", "}" ],
+  p  => [ "\n\n", "\n\n" ],
+  b  => [ "\\textbf{", "}" ],
+  i  => [ "\\textit{", "}" ],
+  u  => [ "\\underline{", "}" ],
+  br => [ "\\\\\n", "" ],
+  em => [ "\\emph{", "}" ],
+  tt => [ "\\texttt{", "}" ],
+  h1 => [ "\n\n\\vspace{0.5em}{\\bf\\Large ", "}\n\n\\nopagebreak" ],
+  h2 => [ "\n\n\\vspace{0.5em}{\\bf\\Large ", "}\n\n\\nopagebreak" ],
+  h3 => [ "\n\n\\vspace{0.5em}{\\bf\\Large ", "}\n\n\\nopagebreak" ],
+  h4 => [ "\n\n\\vspace{0.5em}{\\bf\\Large ", "}\n\n\\nopagebreak" ],
+  h5 => [ "\n\n\\vspace{0.5em}{\\bf\\Large ", "}\n\n\\nopagebreak" ],
+  h6 => [ "\n\n\\vspace{0.5em}{\\bf\\Large ", "}\n\n\\nopagebreak" ],
+  ul => [ "\n\\begin{itemize}\n", "\n\\end{itemize}" ],
+  ol => [ "\n\\begin{enumerate}\n", "\n\\end{enumerate}" ],
+  dl => [ "\n\\begin{description}\n", "\n\\end{description}\n" ],
+  dt => [ "\n\\item[", "]" ],
+  dd => [ "\n", "\n" ],
+  li => [ "\n\\item ", "\n" ],
+  tr => [ "\n\n", "\n\n" ],
+  div => [ "\n\n", "\n\n" ],
+  kbd => ["{\\tt\\bf ", "}" ],
+  var => ["\\textit{", "}" ],
+  dfn => ["\\textit{", "}" ],
+  cite => ["\\textit{", "}" ],
+  samp => ["\\texttt{", "}" ],
+  code => ["\\texttt{", "}" ],
+  strong => ["\\textbf{", "}" ],
+  pre => ["\n\\scalefont{0.8}\n\\begin{verbatimtab}[4]\n", "\n\\end{verbatimtab}\n\\scalefont{1.25}\n" ],
+  listing => ["\n\\scalefont{0.8}\n\\begin{verbatimtab}[4]\n", "\n\\end{verbatimtab}\n\\scalefont{1.25}\n" ]
+);
+  
+  print <<LATEX;
+\\documentclass[12pt]{article}
+\\usepackage[T1]{fontenc}
+\\usepackage[utf8x]{inputenc}
+\\usepackage{libertine}
+\\usepackage{inconsolata}
+\\usepackage{scalefnt}
+\\usepackage{moreverb}
+\\usepackage{color}
+\\usepackage[margin=2cm]{geometry}
+\\definecolor{darkblue}{RGB}{0,0,127}
+\\usepackage[a4paper]{hyperref}
+\\hypersetup{
+    pdfstartview={FitH}, % fits the widtH of the page to the window
+    pdfpagelayout={OneColumn},
+    pdfprintscaling={None},
+    colorlinks=true,
+    urlcolor=darkblue,
+    linkcolor=black,
+    citecolor=black,
+    filecolor=black
+}
+\\setlength{\\parskip}{0.75em}
+\\setlength{\\parindent}{0em}
+\\begin{document}
+\\frenchspacing
+\\scalefont{1.2}
+
+\\begin{center}
+{\\LARGE\\bf $title}
+\\end{center}
+\\vspace{1.5em}
+LATEX
+
+  ${$ref}->traverse( sub {
+    my $node = shift;
+    if (ref $node) {
+      my $tag = $node->tag;
+      return 0 if $tag =~ /$ignore/;
+      if (defined $translation{$tag}) {
+        if (shift) { # before recursing
+          # transform hyperlinks into hyperrefs
+          if ($tag eq "a") {
+            my $anchor = $node->attr('href');
+            if (defined $anchor) {
+              print "\\href{" . &ent2tex($anchor) . "}{"
+            }
+            else { print "{" }
+          }
+          # don't print a heading if the title contains it
+          elsif ($tag =~ /h[123456]/) {
+            my $text = $node->as_text();
+            if ($title =~ /$text/) {
+              return 0;
+            }
+            print $translation{$tag}[0];
+          }
+          # set a flag if no entity decoding is needed
+          elsif ($tag =~ /pre|listing/) {
+            $verbatim = 1;
+            print $translation{$tag}[0];
+          }
+          else {
+            print $translation{$tag}[0];
+          }
+        }
+        else { # after recursing
+          # reset verbatim flag if needed
+          $verbatim = 0 if $verbatim;
+          print $translation{$tag}[1];
+        }
+      }
+    }
+    else { #if ($node =~ /\w/) {
+      if ($verbatim) {
+        print $node;
+      }
+      else {
+        print &ent2tex($node);
+      }
+    }
+    return 1;
+  });
+
+  print "\n\n\\end{document}";
+
+}
+
+sub ent2tex {
+  local $_ = $_[0];
+
+  # escape LaTeX special characters (& and # are at the bottom)
+  s/\\/\\textbackslash/gs;
+  s/%/\\%/gs;
+  s/~/\\~/gs;
+  s/\^/\\\^\{\}/gs;
+  s/_/\\_/gs;
+  s/\$/\\\$/gs;
+  s/\{/\\\{/gs;
+  s/\}/\\\}/gs;
+
+  # convert Unicode to LaTeX symbols (need more of this)
+  s/ /~/gs;
+  s/″/''/gs;
+  s/—/--/gs;
+  s/“/``/gs;
+  s/‘/`/gs;
+  s/’/'/gs;
+  s/”/''/gs;
+  
+  # convert HTML entities to LaTeX symbols
+  s/\&emsp;|\&#?8195;/\\hspace\{1em\}/gs;	# EM SPACE
+  s/\&ensp;|\&#?8194;/\\hspace\{0\.5em\}/gs;	# EN SPACE
+  s/\&emsp13;|\&#?8196;/\\hspace\{0\.33em\}/gs;	# THREE-PER-EM SPACE
+  s/\&emsp14;|\&#?8197;/\\hspace\{0\.25em\}/gs;	# FOUR-PER-EM SPACE
+  s/\&numsp;|\&#?8199;/\\hphantom\{0\}/gs;	# FIGURE SPACE
+  s/\&puncsp;|\&#?8200;/\\hphantom\{,\}/gs;	# PUNCTUATION SPACE
+  s/\&thinsp;|\&#?8201;/\\hspace\{0\.167em\}/gs;	# THIN SPACE
+  s/\&hairsp;|\&#?8202;/\\hspace\{1pt\}/gs;	# HAIR SPACE
+  s/\&mdash;|\&#?8212;/---/gs;	# EM DASH
+  s/\&ndash;|\&#?8211;/--/gs;	# EN DASH
+  s/\&dash;|\&#?8208;/-/gs;	# HYPHEN
+  s/\&blank;|\&#?9251;/\{\\textvisiblespace\}/gs;	# OPEN BOX
+  s/\&hellip;|\&#?8230;/\{\\ldots\}/gs;	# HORIZONTAL ELLIPSIS
+  s/\&nldr;|\&#?8229;/\{\\nldr\}/gs;	# TWO DOT LEADER
+  s/\&frac13;|\&#?8531;/\$\\sfrac\{1\}\{3\}\$/gs;	# VULGAR FRACTION ONE THIRD
+  s/\&frac23;|\&#?8532;/\$\\sfrac\{2\}\{3\}\$/gs;	# VULGAR FRACTION TWO THIRDS
+  s/\&frac15;|\&#?8533;/\$\\sfrac\{1\}\{5\}\$/gs;	# VULGAR FRACTION ONE FIFTH
+  s/\&frac25;|\&#?8534;/\$\\sfrac\{2\}\{5\}\$/gs;	# VULGAR FRACTION TWO FIFTHS
+  s/\&frac35;|\&#?8535;/\$\\sfrac\{3\}\{5\}\$/gs;	# VULGAR FRACTION THREE FIFTHS
+  s/\&frac45;|\&#?8536;/\$\\sfrac\{4\}\{5\}\$/gs;	# VULGAR FRACTION FOUR FIFTHS
+  s/\&frac16;|\&#?8537;/\$\\sfrac\{1\}\{6\}\$/gs;	# VULGAR FRACTION ONE SIXTH
+  s/\&frac56;|\&#?8538;/\$\\sfrac\{5\}\{6\}\$/gs;	# VULGAR FRACTION FIVE SIXTHS
+  s/\&incare;|\&#?8453;/\$\{\^c\\!\/\\!_o\}\$/gs;	# CARE OF
+  s/\&block;|\&#?9608;/\{\\block\}/gs;	# FULL BLOCK
+  s/\&uhblk;|\&#?9600;/\{\\uhblk\}/gs;	# UPPER HALF BLOCK
+  s/\&lhblk;|\&#?9604;/\{\\lhblk\}/gs;	# LOWER HALF BLOCK
+  s/\&blk14;|\&#?9617;/\\textcolor\[gray\]\{\.75\}\{\\block\}/gs;	# LIGHT SHADE
+  s/\&blk12;|\&#?9618;/\\textcolor\[gray\]\{\.5\}\{\\block\}/gs;	# MEDIUM SHADE
+  s/\&blk34;|\&#?9619;/\\textcolor\[gray\]\{\.25\}\{\\block\}/gs;	# DARK SHADE
+  s/\&marker;|\&#?9646;/\{\\marker\}/gs;	# BLACK VERTICAL RECTANGLE
+  s/\&cir;|\&#?9675;/\$\\circ\$/gs;	# WHITE CIRCLE
+  s/\&squ;|\&#?9633;/\$\\square\$/gs;	# WHITE SQUARE
+  s/\&rect;|\&#?9645;/\\fbox\{~~\}/gs;	# WHITE RECTANGLE
+  s/\&utri;|\&#?9653;/\$\\vartriangle\$/gs;	# WHITE UP-POINTING TRIANGLE
+  s/\&dtri;|\&#?9663;/\$\\triangledown\$/gs;	# WHITE DOWN-POINTING TRIANGLE
+  s/\&star;|\&#?9734;/\\ding\{73\}/gs;	# WHITE STAR
+  s/\&bull;|\&#?8226;/\{\\textbullet\}/gs;	# BULLET
+  s/\&squf;|\&#?9642;/\$\\blacksquare\$/gs;	# BLACK SMALL SQUARE
+  s/\&utrif;|\&#?9652;/\$\\blacktriangle\$/gs;	# BLACK UP-POINTING TRIANGLE
+  s/\&dtrif;|\&#?9662;/\$\\blacktriangledown\$/gs;	# BLACK DOWN-POINTING TRIANGLE
+  s/\&ltrif;|\&#?9666;/\$\\blacktriangleleft\$/gs;	# BLACK LEFT-POINTING TRIANGLE
+  s/\&rtrif;|\&#?9656;/\$\\blacktriangleright\$/gs;	# BLACK RIGHT-POINTING TRIANGLE
+  s/\&clubs;|\&#?9827;/\\ding\{168\}/gs;	# BLACK CLUB SUIT
+  s/\&diams;|\&#?9830;/\\ding\{169\}/gs;	# BLACK DIAMOND SUIT
+  s/\&hearts;|\&#?9829;/\\ding\{170\}/gs;	# BLACK HEART SUIT
+  s/\&spades;|\&#?9824;/\\ding\{171\}/gs;	# BLACK SPADE SUIT
+  s/\&malt;|\&#?10016;/\{\\maltese\}/gs;	# MALTESE CROSS
+  s/\&dagger;|\&#?8224;/\{\\dag\}/gs;	# DAGGER
+  s/\&Dagger;|\&#?8225;/\{\\ddag\}/gs;	# DOUBLE DAGGER
+  s/\&check;|\&#?10003;/\{\\checkmark\}/gs;	# CHECK MARK
+  s/\&cross;|\&#?10007;/\\ding\{55\}/gs;	# BALLOT X
+  s/\&sharp;|\&#?9839;/\$\\sharp\$/gs;	# MUSIC SHARP SIGN
+  s/\&flat;|\&#?9837;/\$\\flat\$/gs;	# MUSIC FLAT SIGN
+  s/\&male;|\&#?9794;/\{\\male\}/gs;	# MALE SIGN
+  s/\&female;|\&#?9792;/\{\\female\}/gs;	# FEMALE SIGN
+  s/\&phone;|\&#?9742;/\{\\phone\}/gs;	# TELEPHONE SIGN
+  s/\&telrec;|\&#?8981;/\{\\recorder\}/gs;	# TELEPHONE RECORDER
+  s/\&copysr;|\&#?8471;/\{\\textcircledP\}/gs;	# SOUND RECORDING COPYRIGHT
+  s/\&caret;|\&#?8257;/\$\\mathchar"1356\$/gs;	# CARET
+  s/\&lsquor;|\&#?8218;/,/gs;	# SINGLE LOW-9 QUOTATION MARK
+  s/\&ldquor;|\&#?8222;/,,/gs;	# DOUBLE LOW-9 QUOTATION MARK
+  s/\&fflig;|\&#?64256;/\{ff\}/gs;	# LATIN SMALL LIGATURE FF
+  s/\&filig;|\&#?64257;/\{fi\}/gs;	# LATIN SMALL LIGATURE FI
+  s/\&fjlig;|\&#?58290;/\{fj\}/gs;	# SMALL FJ LIGATURE
+  s/\&ffilig;|\&#?64259;/\{ffi\}/gs;	# LATIN SMALL LIGATURE FFI
+  s/\&ffllig;|\&#?64260;/\{ffl\}/gs;	# LATIN SMALL LIGATURE FFL
+  s/\&fllig;|\&#?64258;/\{fl\}/gs;	# LATIN SMALL LIGATURE FL
+  s/\&mldr;|\&#?8230;/\{\\mldr\}/gs;	# HORIZONTAL ELLIPSIS
+  s/\&rdquor;|\&#?8223;/``/gs;	# DOUBLE HIGH-REVERSED-9 QUOTATION MARKcheck unicode 201F/201C
+  s/\&rsquor;|\&#?8219;/`/gs;	# SINGLE HIGH-REVERSED-9 QUOTATION MARKcheck unicode 201B/2018
+  s/\&vellip;|\&#?8942;/\$\\vdots\$/gs;	# VERTICAL ELLIPSIS
+  s/\&hybull;|\&#?8259;/\{\\hybull\}/gs;	# HYPHEN BULLET
+  s/\&loz;|\&#?9674;/\$\\lozenge\$/gs;	# LOZENGE
+  s/\&lozf;|\&#?59403;/\$\\blacklozenge\$/gs;	# LOZENGE, FILLEDwrong unicode mapping
+  s/\&ltri;|\&#?9667;/\$\\triangleleft\$/gs;	# WHITE LEFT-POINTING TRIANGLE
+  s/\&rtri;|\&#?9657;/\$\\triangleright\$/gs;	# WHITE RIGHT-POINTING TRIANGLE
+  s/\&starf;|\&#?9733;/\$\\bigstar\$/gs;	# BLACK STAR
+  s/\&natur;|\&#?9838;/\$\\natural\$/gs;	# MUSIC NATURAL SIGN
+  s/\&rx;|\&#?8478;/\{\\textrecipe\}/gs;	# PRESCRIPTION TAKE
+  s/\&sext;|\&#?10038;/\\ding\{86\}/gs;	# SIX POINTED BLACK STAR
+  s/\&target;|\&#?8982;/\$\\mathchar"2208\$/gs;	# POSITION INDICATOR
+  s/\&dlcrop;|\&#?8973;/\{\\dlcrop\}/gs;	# BOTTOM LEFT CROP
+  s/\&drcrop;|\&#?8972;/\{\\drcrop\}/gs;	# BOTTOM RIGHT CROP
+  s/\&ulcrop;|\&#?8975;/\{\\ulcrop\}/gs;	# TOP LEFT CROP
+  s/\&urcrop;|\&#?8974;/\{\\urcrop\}/gs;	# TOP RIGHT CROP
+  s/\&half;|\&#?189;/\$\\sfrac\{1\}\{2\}\$/gs;	# VULGAR FRACTION ONE HALF
+  s/\&frac14;|\&#?188;/\$\\sfrac\{1\}\{4\}\$/gs;	# VULGAR FRACTION ONE QUARTER
+  s/\&frac34;|\&#?190;/\$\\sfrac\{3\}\{4\}\$/gs;	# VULGAR FRACTION THREE QUARTERS
+  s/\&frac18;|\&#?8539;/\$\\sfrac\{1\}\{8\}\$/gs;	# VULGAR FRACTION ONE EIGHTH
+  s/\&frac38;|\&#?8540;/\$\\sfrac\{3\}\{8\}\$/gs;	# VULGAR FRACTION THREE EIGHTHS
+  s/\&frac58;|\&#?8541;/\$\\sfrac\{5\}\{8\}\$/gs;	# VULGAR FRACTION FIVE EIGHTHS
+  s/\&frac78;|\&#?8542;/\$\\sfrac\{7\}\{8\}\$/gs;	# VULGAR FRACTION SEVEN EIGHTHS
+  s/\&sup1;|\&#?185;/\$\^1\$/gs;	# SUPERSCRIPT ONE
+  s/\&sup2;|\&#?178;/\$\^2\$/gs;	# SUPERSCRIPT TWO
+  s/\&sup3;|\&#?179;/\$\^3\$/gs;	# SUPERSCRIPT THREE
+  s/\&plus;|\&#?43;/\$\+\$/gs;	# PLUS SIGN
+  s/\&plusmn;|\&#?177;/\{\\textpm\}/gs;	# PLUS-MINUS SIGN
+  s/\&lt;|\&#?60;/\{\\textless\}/gs;	# LESS-THAN SIGN
+  s/\&equals;|\&#?61;/\$=\$/gs;	# EQUALS SIGN
+  s/\&gt;|\&#?62;/\{\\textgreater\}/gs;	# GREATER-THAN SIGN
+  s/\&divide;|\&#?247;/\{\\textdiv\}/gs;	# DIVISION SIGN
+  s/\&times;|\&#?215;/\{\\texttimes\}/gs;	# MULTIPLICATION SIGN
+  s/\&curren;|\&#?164;/\{\\textcurrency\}/gs;	# CURRENCY SIGN
+  s/\&pound;|\&#?163;/\{\\pounds\}/gs;	# POUND SIGN
+  s/\&dollar;|\&#?36;/\\\$/gs;	# DOLLAR SIGN
+  s/\&cent;|\&#?162;/\{\\textcent\}/gs;	# CENT SIGN
+  s/\&yen;|\&#?165;/\{\\textyen\}/gs;	# YEN SIGN
+  s/\&num;|\&#?35;/\\#/gs;	# NUMBER SIGN
+  s/\&percnt;|\&#?37;/\\%/gs;	# PERCENT SIGN
+  s/\&amp;|\&#?38;/\\&/gs;	# AMPERSAND
+  s/\&ast;|\&#?42;/\$\\ast\$/gs;	# ASTERISK
+  s/\&commat;|\&#?64;/@/gs;	# COMMERCIAL AT
+  s/\&lsqb;|\&#?91;/\[/gs;	# LEFT SQUARE BRACKET
+  s/\&bsol;|\&#?92;/\{\\textbackslash\}/gs;	# REVERSE SOLIDUS
+  s/\&rsqb;|\&#?93;/\]/gs;	# RIGHT SQUARE BRACKET
+  s/\&lcub;|\&#?123;/\\\{/gs;	# LEFT CURLY BRACKET
+  s/\&horbar;|\&#?8213;/---/gs;	# HORIZONTAL BAR
+  s/\&verbar;|\&#?124;/\{\\textbar\}/gs;	# VERTICAL LINE
+  s/\&rcub;|\&#?125;/\\\}/gs;	# RIGHT CURLY BRACKET
+  s/\&micro;|\&#?181;/\{\\textmu\}/gs;	# MICRO SIGN
+  s/\&ohm;|\&#?8486;/\{\\textohm\}/gs;	# OHM SIGN
+  s/\&deg;|\&#?176;/\{\\textdegree\}/gs;	# DEGREE SIGN
+  s/\&ordm;|\&#?186;/\{\\textordmasculine\}/gs;	# MASCULINE ORDINAL INDICATOR
+  s/\&ordf;|\&#?170;/\{\\textordfeminine\}/gs;	# FEMININE ORDINAL INDICATOR
+  s/\&sect;|\&#?167;/\{\\S\}/gs;	# SECTION SIGN
+  s/\&para;|\&#?182;/\{\\P\}/gs;	# PILCROW SIGN
+  s/\&middot;|\&#?183;/\{\\textperiodcentered\}/gs;	# MIDDLE DOT
+  s/\&larr;|\&#?8592;/\{\\textleftarrow\}/gs;	# LEFTWARDS ARROW
+  s/\&rarr;|\&#?8594;/\{\\textrightarrow\}/gs;	# RIGHTWARDS ARROW
+  s/\&uarr;|\&#?8593;/\{\\textuparrow\}/gs;	# UPWARDS ARROW
+  s/\&darr;|\&#?8595;/\{\\textdownarrow\}/gs;	# DOWNWARDS ARROW
+  s/\&copy;|\&#?169;/\{\\copyright\}/gs;	# COPYRIGHT SIGN
+  s/\&reg;|\&#?174;/\{\\textregistered\}/gs;	# REGISTERED SIGN
+  s/\&trade;|\&#?8482;/\{\\texttrademark\}/gs;	# TRADE MARK SIGN
+  s/\&brvbar;|\&#?166;/\{\\textbrokenbar\}/gs;	# BROKEN BAR
+  s/\&not;|\&#?172;/\{\\textlnot\}/gs;	# NOT SIGN
+  s/\&sung;|\&#?9834;/\{\\textmusicalnote\}/gs;	# EIGHTH NOTE
+  s/\&excl;|\&#?33;/!/gs;	# EXCLAMATION MARK
+  s/\&iexcl;|\&#?161;/!`/gs;	# INVERTED EXCLAMATION MARK
+  s/\&quot;|\&#?34;/"/gs;	# QUOTATION MARK
+  s/\&apos;|\&#?39;/'/gs;	# APOSTROPHE
+  s/\&lpar;|\&#?40;/\(/gs;	# LEFT PARENTHESIS
+  s/\&rpar;|\&#?41;/\)/gs;	# RIGHT PARENTHESIS
+  s/\&comma;|\&#?44;/,/gs;	# COMMA
+  s/\&lowbar;|\&#?95;/\\underline\{\\hspace\{1ex\}\}/gs;	# LOW LINE
+  s/\&hyphen;|\&#?45;/-/gs;	# HYPHEN-MINUS
+  s/\&period;|\&#?46;/\./gs;	# FULL STOP
+  s/\&sol;|\&#?47;/\//gs;	# SOLIDUS
+  s/\&colon;|\&#?58;/:/gs;	# COLON
+  s/\&semi;|\&#?59;/;/gs;	# SEMICOLON
+  s/\&quest;|\&#?63;/\?/gs;	# QUESTION MARK
+  s/\&iquest;|\&#?191;/\?`/gs;	# INVERTED QUESTION MARK
+  s/\&laquo;|\&#?171;/\{\\guillemotleft\}/gs;	# LEFT-POINTING DOUBLE ANGLE QUOTATION MARK
+  s/\&raquo;|\&#?187;/\{\\guillemotright\}/gs;	# RIGHT-POINTING DOUBLE ANGLE QUOTATION MARK
+  s/\&lsquo;|\&#?8216;/`/gs;	# LEFT SINGLE QUOTATION MARK
+  s/\&rsquo;|\&#?8217;/'/gs;	# RIGHT SINGLE QUOTATION MARK
+  s/\&ldquo;|\&#?8220;/``/gs;	# LEFT DOUBLE QUOTATION MARK
+  s/\&rdquo;|\&#?8221;/''/gs;	# RIGHT DOUBLE QUOTATION MARK
+  s/\&nbsp;|\&#?160;/~/gs;	# NO-BREAK SPACE
+  s/\&shy;|\&#?173;/\\-/gs;	# SOFT HYPHEN
+  s/\&boxh;|\&#?9472;/\{\\boxh\}/gs;	# BOX DRAWINGS LIGHT HORIZONTAL
+  s/\&boxv;|\&#?9474;/\{\\boxv\}/gs;	# BOX DRAWINGS LIGHT VERTICAL
+  s/\&boxur;|\&#?9492;/\{\\boxur\}/gs;	# BOX DRAWINGS LIGHT UP AND RIGHT
+  s/\&boxul;|\&#?9496;/\{\\boxul\}/gs;	# BOX DRAWINGS LIGHT UP AND LEFT
+  s/\&boxdl;|\&#?9488;/\{\\boxdl\}/gs;	# BOX DRAWINGS LIGHT DOWN AND LEFT
+  s/\&boxdr;|\&#?9484;/\{\\boxdr\}/gs;	# BOX DRAWINGS LIGHT DOWN AND RIGHT
+  s/\&boxvr;|\&#?9500;/\{\\boxvr\}/gs;	# BOX DRAWINGS LIGHT VERTICAL AND RIGHT
+  s/\&boxhu;|\&#?9524;/\{\\boxhu\}/gs;	# BOX DRAWINGS LIGHT UP AND HORIZONTAL
+  s/\&boxvl;|\&#?9508;/\{\\boxvl\}/gs;	# BOX DRAWINGS LIGHT VERTICAL AND LEFT
+  s/\&boxhd;|\&#?9516;/\{\\boxhd\}/gs;	# BOX DRAWINGS LIGHT DOWN AND HORIZONTAL
+  s/\&boxvh;|\&#?9532;/\{\\boxvh\}/gs;	# BOX DRAWINGS LIGHT VERTICAL AND HORIZONTAL
+  s/\&boxvR;|\&#?9566;/\{\\boxvR\}/gs;	# BOX DRAWINGS VERTICAL SINGLE AND RIGHT DOUBLE
+  s/\&boxhU;|\&#?9576;/\{\\boxhU\}/gs;	# BOX DRAWINGS UP DOUBLE AND HORIZONTAL SINGLE
+  s/\&boxvL;|\&#?9569;/\{\\boxvL\}/gs;	# BOX DRAWINGS VERTICAL SINGLE AND LEFT DOUBLE
+  s/\&boxhD;|\&#?9573;/\{\\boxhD\}/gs;	# BOX DRAWINGS DOWN DOUBLE AND HORIZONTAL SINGLE
+  s/\&boxvH;|\&#?9578;/\{\\boxvH\}/gs;	# BOX DRAWINGS VERTICAL SINGLE AND HORIZONTAL DOUBLE
+  s/\&boxH;|\&#?9552;/\{\\boxH\}/gs;	# BOX DRAWINGS DOUBLE HORIZONTAL
+  s/\&boxV;|\&#?9553;/\{\\boxV\}/gs;	# BOX DRAWINGS DOUBLE VERTICAL
+  s/\&boxUR;|\&#?9562;/\{\\boxUR\}/gs;	# BOX DRAWINGS DOUBLE UP AND RIGHT
+  s/\&boxUL;|\&#?9565;/\{\\boxUL\}/gs;	# BOX DRAWINGS DOUBLE UP AND LEFT
+  s/\&boxDL;|\&#?9559;/\{\\boxDL\}/gs;	# BOX DRAWINGS DOUBLE DOWN AND LEFT
+  s/\&boxDR;|\&#?9556;/\{\\boxDR\}/gs;	# BOX DRAWINGS DOUBLE DOWN AND RIGHT
+  s/\&boxVR;|\&#?9568;/\{\\boxVR\}/gs;	# BOX DRAWINGS DOUBLE VERTICAL AND RIGHT
+  s/\&boxHU;|\&#?9577;/\{\\boxHU\}/gs;	# BOX DRAWINGS DOUBLE UP AND HORIZONTAL
+  s/\&boxVL;|\&#?9571;/\{\\boxVL\}/gs;	# BOX DRAWINGS DOUBLE VERTICAL AND LEFT
+  s/\&boxHD;|\&#?9574;/\{\\boxHD\}/gs;	# BOX DRAWINGS DOUBLE DOWN AND HORIZONTAL
+  s/\&boxVH;|\&#?9580;/\{\\boxVH\}/gs;	# BOX DRAWINGS DOUBLE VERTICAL AND HORIZONTAL
+  s/\&boxVr;|\&#?9567;/\{\\boxVr\}/gs;	# BOX DRAWINGS VERTICAL DOUBLE AND RIGHT SINGLE
+  s/\&boxHu;|\&#?9575;/\{\\boxHu\}/gs;	# BOX DRAWINGS UP SINGLE AND HORIZONTAL DOUBLE
+  s/\&boxVl;|\&#?9570;/\{\\boxVl\}/gs;	# BOX DRAWINGS VERTICAL DOUBLE AND LEFT SINGLE
+  s/\&boxHd;|\&#?9572;/\{\\boxHd\}/gs;	# BOX DRAWINGS DOWN SINGLE AND HORIZONTAL DOUBLE
+  s/\&boxVh;|\&#?9579;/\{\\boxVh\}/gs;	# BOX DRAWINGS VERTICAL DOUBLE AND HORIZONTAL SINGLE
+  s/\&boxuR;|\&#?9560;/\{\\boxuR\}/gs;	# BOX DRAWINGS UP SINGLE AND RIGHT DOUBLE
+  s/\&boxUl;|\&#?9564;/\{\\boxUl\}/gs;	# BOX DRAWINGS UP DOUBLE AND LEFT SINGLE
+  s/\&boxdL;|\&#?9557;/\{\\boxdL\}/gs;	# BOX DRAWINGS DOWN SINGLE AND LEFT DOUBLE
+  s/\&boxDr;|\&#?9555;/\{\\boxDr\}/gs;	# BOX DRAWINGS DOWN DOUBLE AND RIGHT SINGLE
+  s/\&boxUr;|\&#?9561;/\{\\boxUr\}/gs;	# BOX DRAWINGS UP DOUBLE AND RIGHT SINGLE
+  s/\&boxuL;|\&#?9563;/\{\\boxuL\}/gs;	# BOX DRAWINGS UP SINGLE AND LEFT DOUBLE
+  s/\&boxDl;|\&#?9558;/\{\\boxDl\}/gs;	# BOX DRAWINGS DOWN DOUBLE AND LEFT SINGLE
+  s/\&boxdR;|\&#?9554;/\{\\boxdR\}/gs;	# BOX DRAWINGS DOWN SINGLE AND RIGHT DOUBLE
+  s/\&aleph;|\&#?8501;/\$\\aleph\$/gs;	# ALEF SYMBOL
+  s/\&and;|\&#?8743;/\$\\wedge\$/gs;	# LOGICAL AND
+  s/\&ang90;|\&#?8735;/\$\\sqangle\$/gs;	# RIGHT ANGLE
+  s/\&angsph;|\&#?8738;/\$\\sphericalangle\$/gs;	# SPHERICAL ANGLE
+  s/\&ap;|\&#?8776;/\$\\approx\$/gs;	# ALMOST EQUAL TO
+  s/\&becaus;|\&#?8757;/\$\\because\$/gs;	# BECAUSE
+  s/\&bottom;|\&#?8869;/\$\\bot\$/gs;	# UP TACK
+  s/\&cap;|\&#?8745;/\$\\cap\$/gs;	# INTERSECTION
+  s/\&cong;|\&#?8773;/\$\\cong\$/gs;	# APPROXIMATELY EQUAL TO
+  s/\&conint;|\&#?8750;/\$\\oint\$/gs;	# CONTOUR INTEGRAL
+  s/\&cup;|\&#?8746;/\$\\cup\$/gs;	# UNION
+  s/\&equiv;|\&#?8801;/\$\\equiv\$/gs;	# IDENTICAL TO
+  s/\&exist;|\&#?8707;/\$\\exists\$/gs;	# THERE EXISTS
+  s/\&forall;|\&#?8704;/\$\\forall\$/gs;	# FOR ALL
+  s/\&fnof;|\&#?402;/\$f\$/gs;	# LATIN SMALL LETTER F WITH HOOK
+  s/\&ge;|\&#?8805;/\$\\geq\$/gs;	# GREATER-THAN OR EQUAL TO
+  s/\&iff;|\&#?8660;/\$\\iff\$/gs;	# LEFT RIGHT DOUBLE ARROWwrong unicode?
+  s/\&infin;|\&#?8734;/\$\\infty\$/gs;	# INFINITY
+  s/\&int;|\&#?8747;/\$\\int\$/gs;	# INTEGRAL
+  s/\&isin;|\&#?8712;/\$\\in\$/gs;	# ELEMENT OF
+  s/\&lang;|\&#?12296;/\{\\textlangle\}/gs;	# LEFT ANGLE BRACKET
+  s/\&lArr;|\&#?8656;/\$\\Leftarrow\$/gs;	# LEFTWARDS DOUBLE ARROW
+  s/\&le;|\&#?8804;/\$\\leq\$/gs;	# LESS-THAN OR EQUAL TO
+  s/\&minus;|\&#?8722;/\{\\textminus\}/gs;	# MINUS SIGN
+  s/\&mnplus;|\&#?8723;/\$\\mp\$/gs;	# MINUS-OR-PLUS SIGN
+  s/\&nabla;|\&#?8711;/\$\\nabla\$/gs;	# NABLA
+  s/\&ne;|\&#?8800;/\$\\not=\$/gs;	# NOT EQUAL TO
+  s/\&ni;|\&#?8715;/\$\\ni\$/gs;	# CONTAINS AS MEMBER
+  s/\&or;|\&#?8744;/\$\\vee\$/gs;	# LOGICAL OR
+  s/\&par;|\&#?8741;/\$\\parallel\$/gs;	# PARALLEL TO
+  s/\&part;|\&#?8706;/\$\\partial\$/gs;	# PARTIAL DIFFERENTIAL
+  s/\&permil;|\&#?8240;/\{\\textperthousand\}/gs;	# PER MILLE SIGN
+  s/\&perp;|\&#?8869;/\$\\perp\$/gs;	# UP TACK
+  s/\&prime;|\&#?8242;/\$\^\\prime\$/gs;	# PRIME
+  s/\&Prime;|\&#?8243;/\$\{''\}\$/gs;	# DOUBLE PRIME
+  s/\&prop;|\&#?8733;/\$\\propto\$/gs;	# PROPORTIONAL TO
+  s/\&radic;|\&#?8730;/\{\\textsurd\}/gs;	# FOURTH ROOT
+  s/\&rang;|\&#?12297;/\{\\textrangle\}/gs;	# RIGHT ANGLE BRACKET
+  s/\&rArr;|\&#?8658;/\$\\Rightarrow\$/gs;	# RIGHTWARDS DOUBLE ARROW
+  s/\&sim;|\&#?8764;/\$\\sim\$/gs;	# TILDE OPERATOR
+  s/\&sime;|\&#?8771;/\$\\simeq\$/gs;	# APPROXIMATELY EQUAL TO
+  s/\&square;|\&#?9632;/\$\\square\$/gs;	# BLACK SQUARE
+  s/\&sub;|\&#?8834;/\$\\subset\$/gs;	# SUBSET OF
+  s/\&sube;|\&#?8838;/\$\\subseteq\$/gs;	# SUBSET OF OR EQUAL TO
+  s/\&sup;|\&#?8835;/\$\\supset\$/gs;	# SUPERSET OF
+  s/\&supe;|\&#?8839;/\$\\supseteq\$/gs;	# SUPERSET OF OR EQUAL TO
+  s/\&there4;|\&#?8756;/\$\\therefore\$/gs;	# THEREFORE
+  s/\&Verbar;|\&#?8214;/\{\\textbardbl\}/gs;	# DOUBLE VERTICAL LINE
+  s/\&angst;|\&#?8491;/\{\\AA\}/gs;	# ANGSTROM SIGN
+  s/\&bernou;|\&#?8492;/\$B\$/gs;	# SCRIPT CAPITAL B
+  s/\&compfn;|\&#?8728;/\$\\circ\$/gs;	# RING OPERATOR
+  s/\&Dot;|\&#?168;/\$\\ddot\{\}\$/gs;	# DIAERESIScheck unicode, die/uml
+  s/\&DotDot;|\&#?8412;/\$\\ddot\{\}\\kern4\.5pt\\ddot\{ \}\$/gs;	# COMBINING FOUR DOTS ABOVE
+  s/\&hamilt;|\&#?8459;/\$H\$/gs;	# SCRIPT CAPITAL H
+  s/\&lagran;|\&#?8466;/\$L\$/gs;	# SCRIPT CAPITAL L
+  s/\&lowast;|\&#?8727;/\$_\\ast\$/gs;	# ASTERISK OPERATORcheck unicode
+  s/\&notin;|\&#?8713;/\$\\not\\in\$/gs;	# NOT AN ELEMENT OF
+  s/\&order;|\&#?8500;/\$\\mathit\{o\}\$/gs;	# SCRIPT SMALL O
+  s/\&phmmat;|\&#?8499;/\$M\$/gs;	# SCRIPT CAPITAL M
+  s/\&tdot;|\&#?8411;/\$\\ddot\{\}\\kern 3pt\\dot\{ \}\$/gs;	# COMBINING THREE DOTS ABOVE
+  s/\&tprime;|\&#?8244;/\$\{'''\}\$/gs;	# TRIPLE PRIME
+  s/\&wedgeq;|\&#?8793;/\$\\stackrel\{\\wedge\}\{=\}\$/gs;	# ESTIMATES
+  s/\&alpha;|\&#?945;/\$\\alpha\$/gs;	# GREEK SMALL LETTER ALPHA
+  s/\&beta;|\&#?946;/\$\\beta\$/gs;	# GREEK SMALL LETTER BETA
+  s/\&gamma;|\&#?947;/\$\\gamma\$/gs;	# GREEK SMALL LETTER GAMMA
+  s/\&Gamma;|\&#?915;/\$\\Gamma\$/gs;	# GREEK CAPITAL LETTER GAMMA
+  s/\&gammad;|\&#?988;/\$\\digamma\$/gs;	# GREEK LETTER DIGAMMA
+  s/\&delta;|\&#?948;/\$\\delta\$/gs;	# GREEK SMALL LETTER DELTA
+  s/\&Delta;|\&#?916;/\$\\Delta\$/gs;	# GREEK CAPITAL LETTER DELTA
+  s/\&epsi;|\&#?949;/\$\\epsilon\$/gs;	# GREEK SMALL LETTER EPSILON
+  s/\&epsiv;/\$\\varepsilon\$/gs;
+  s/\&epsis;|\&#?8714;/\$\\epsilon\$/gs;	# SMALL ELEMENT OFcheck the unicode mapping alt: 03B5
+  s/\&zeta;|\&#?950;/\$\\zeta\$/gs;	# GREEK SMALL LETTER ZETA
+  s/\&eta;|\&#?951;/\$\\eta\$/gs;	# GREEK SMALL LETTER ETA
+  s/\&thetas;|\&#?952;/\$\\theta\$/gs;	# GREEK SMALL LETTER THETA
+  s/\&Theta;|\&#?920;/\$\\Theta\$/gs;	# GREEK CAPITAL LETTER THETA
+  s/\&thetav;|\&#?977;/\$\\vartheta\$/gs;	# GREEK THETA SYMBOL
+  s/\&iota;|\&#?953;/\$\\iota\$/gs;	# GREEK SMALL LETTER IOTA
+  s/\&kappa;|\&#?954;/\$\\kappa\$/gs;	# GREEK SMALL LETTER KAPPA
+  s/\&kappav;|\&#?1008;/\$\\varkappa\$/gs;	# GREEK KAPPA SYMBOL
+  s/\&lambda;|\&#?955;/\$\\lambda\$/gs;	# GREEK SMALL LETTER LAMDA
+  s/\&Lambda;|\&#?923;/\$\\Lambda\$/gs;	# GREEK CAPITAL LETTER LAMDA
+  s/\&mu;|\&#?956;/\$\\mu\$/gs;	# GREEK SMALL LETTER MU
+  s/\&nu;|\&#?957;/\$\\nu\$/gs;	# GREEK SMALL LETTER NU
+  s/\&xi;|\&#?958;/\$\\xi\$/gs;	# GREEK SMALL LETTER XI
+  s/\&Xi;|\&#?926;/\$\\Xi\$/gs;	# GREEK CAPITAL LETTER XI
+  s/\&pi;|\&#?960;/\$\\pi\$/gs;	# GREEK SMALL LETTER PI
+  s/\&piv;|\&#?982;/\$\\varpi\$/gs;	# GREEK PI SYMBOL
+  s/\&Pi;|\&#?928;/\$\\Pi\$/gs;	# GREEK CAPITAL LETTER PI
+  s/\&rho;|\&#?961;/\$\\rho\$/gs;	# GREEK SMALL LETTER RHO
+  s/\&rhov;|\&#?1009;/\$\\varrho\$/gs;	# GREEK RHO SYMBOL
+  s/\&sigma;|\&#?963;/\$\\sigma\$/gs;	# GREEK SMALL LETTER SIGMA
+  s/\&Sigma;|\&#?931;/\$\\Sigma\$/gs;	# GREEK CAPITAL LETTER SIGMA
+  s/\&sigmav;|\&#?962;/\$\\varsigma\$/gs;	# GREEK SMALL LETTER FINAL SIGMA
+  s/\&tau;|\&#?964;/\$\\tau\$/gs;	# GREEK SMALL LETTER TAU
+  s/\&upsi;|\&#?965;/\$\\upsilon\$/gs;	# GREEK SMALL LETTER UPSILON
+  s/\&Upsi;|\&#?978;/\$\\Upsilon\$/gs;	# GREEK UPSILON WITH HOOK SYMBOL
+  s/\&phis;|\&#?966;/\$\\phi\$/gs;	# GREEK SMALL LETTER PHI
+  s/\&Phi;|\&#?934;/\$\\Phi\$/gs;	# GREEK CAPITAL LETTER PHI
+  s/\&phiv;|\&#?981;/\$\\varphi\$/gs;	# GREEK PHI SYMBOL
+  s/\&chi;|\&#?967;/\$\\chi\$/gs;	# GREEK SMALL LETTER CHI
+  s/\&psi;|\&#?968;/\$\\psi\$/gs;	# GREEK SMALL LETTER PSI
+  s/\&Psi;|\&#?936;/\$\\Psi\$/gs;	# GREEK CAPITAL LETTER PSI
+  s/\&omega;|\&#?969;/\$\\omega\$/gs;	# GREEK SMALL LETTER OMEGA
+  s/\&Omega;|\&#?937;/\$\\Omega\$/gs;	# GREEK CAPITAL LETTER OMEGA
+  s/\&b.alpha;|\&#?945;/\$\\alpha\$/gs;	# GREEK SMALL LETTER ALPHA
+  s/\&b.beta;|\&#?946;/\$\\beta\$/gs;	# GREEK SMALL LETTER BETA
+  s/\&b.gamma;|\&#?947;/\$\\gamma\$/gs;	# GREEK SMALL LETTER GAMMA
+  s/\&b.Gamma;|\&#?915;/\$\\Gamma\$/gs;	# GREEK CAPITAL LETTER GAMMA
+  s/\&b.gammad;|\&#?988;/\$\\digamma\$/gs;	# GREEK LETTER DIGAMMA
+  s/\&b.delta;|\&#?948;/\$\\delta\$/gs;	# GREEK SMALL LETTER DELTA
+  s/\&b.Delta;|\&#?916;/\$\\Delta\$/gs;	# GREEK CAPITAL LETTER DELTA
+  s/\&b.epsi;|\&#?949;/\$\\epsilon\$/gs;	# GREEK SMALL LETTER EPSILON
+  s/\&b.epsiv;|\&#?949;/\$\\varepsilon\$/gs;	# GREEK SMALL LETTER EPSILON
+  s/\&b.epsis;|\&#?949;/\$\\epsilon\$/gs;	# GREEK SMALL LETTER EPSILON
+  s/\&b.zeta;|\&#?950;/\$\\zeta\$/gs;	# GREEK SMALL LETTER ZETA
+  s/\&b.eta;|\&#?951;/\$\\eta\$/gs;	# GREEK SMALL LETTER ETA
+  s/\&b.thetas;|\&#?952;/\$\\theta\$/gs;	# GREEK SMALL LETTER THETA
+  s/\&b.Theta;|\&#?920;/\$\\Theta\$/gs;	# GREEK CAPITAL LETTER THETA
+  s/\&b.thetav;|\&#?977;/\$\\vartheta\$/gs;	# GREEK THETA SYMBOL
+  s/\&b.iota;|\&#?953;/\$\\iota\$/gs;	# GREEK SMALL LETTER IOTA
+  s/\&b.kappa;|\&#?954;/\$\\kappa\$/gs;	# GREEK SMALL LETTER KAPPA
+  s/\&b.kappav;|\&#?1008;/\$\\varkappa\$/gs;	# GREEK KAPPA SYMBOL
+  s/\&b.lambda;|\&#?955;/\$\\lambda\$/gs;	# GREEK SMALL LETTER LAMDA
+  s/\&b.Lambda;|\&#?923;/\$\\Lambda\$/gs;	# GREEK CAPITAL LETTER LAMDA
+  s/\&b.mu;|\&#?956;/\$\\mu\$/gs;	# GREEK SMALL LETTER MU
+  s/\&b.nu;|\&#?957;/\$\\nu\$/gs;	# GREEK SMALL LETTER NU
+  s/\&b.xi;|\&#?958;/\$\\xi\$/gs;	# GREEK SMALL LETTER XI
+  s/\&b.Xi;|\&#?926;/\$\\Xi\$/gs;	# GREEK CAPITAL LETTER XI
+  s/\&b.pi;|\&#?960;/\$\\pi\$/gs;	# GREEK SMALL LETTER PI
+  s/\&b.Pi;|\&#?928;/\$\\Pi\$/gs;	# GREEK CAPITAL LETTER PI
+  s/\&b.piv;|\&#?982;/\$\\varpi\$/gs;	# GREEK PI SYMBOL
+  s/\&b.rho;|\&#?961;/\$\\rho\$/gs;	# GREEK SMALL LETTER RHO
+  s/\&b.rhov;|\&#?1009;/\$\\varrho\$/gs;	# GREEK RHO SYMBOL
+  s/\&b.sigma;|\&#?963;/\$\\sigma\$/gs;	# GREEK SMALL LETTER SIGMA
+  s/\&b.Sigma;|\&#?931;/\$\\Sigma\$/gs;	# GREEK CAPITAL LETTER SIGMA
+  s/\&b.sigmav;|\&#?962;/\$\\varsigma\$/gs;	# GREEK SMALL LETTER FINAL SIGMA
+  s/\&b.tau;|\&#?964;/\$\\tau\$/gs;	# GREEK SMALL LETTER TAU
+  s/\&b.upsi;|\&#?965;/\$\\upsilon\$/gs;	# GREEK SMALL LETTER UPSILON
+  s/\&b.Upsi;|\&#?978;/\$\\Upsilon\$/gs;	# GREEK CAPITAL LETTER UPSILON
+  s/\&b.phis;|\&#?966;/\$\\phi\$/gs;	# GREEK SMALL LETTER PHI
+  s/\&b.Phi;|\&#?934;/\$\\Phi\$/gs;	# GREEK CAPITAL LETTER PHI
+  s/\&b.phiv;|\&#?981;/\$\\varphi\$/gs;	# GREEK PHI SYMBOL
+  s/\&b.chi;|\&#?967;/\$\\chi\$/gs;	# GREEK SMALL LETTER CHI
+  s/\&b.psi;|\&#?968;/\$\\psi\$/gs;	# GREEK SMALL LETTER PSI
+  s/\&b.Psi;|\&#?936;/\$\\Psi\$/gs;	# GREEK CAPITAL LETTER PSI
+  s/\&b.omega;|\&#?969;/\$\\omega\$/gs;	# GREEK SMALL LETTER OMEGA
+  s/\&b.Omega;|\&#?937;/\$\\Omega\$/gs;	# GREEK CAPITAL LETTER OMEGA
+  s/\&ang;|\&#?8736;/\$\\angle\$/gs;	# ANGLE
+  s/\&angmsd;|\&#?8737;/\$\\measuredangle\$/gs;	# MEASURED ANGLE
+  s/\&beth;|\&#?8502;/\$\\beth\$/gs;	# BET SYMBOL
+  s/\&bprime;|\&#?8245;/\$\^\\backprime\$/gs;	# REVERSED PRIME
+  s/\&comp;|\&#?8705;/\$\\complement\$/gs;	# COMPLEMENT
+  s/\&daleth;|\&#?8504;/\$\\daleth\$/gs;	# DALET SYMBOL
+  s/\&ell;|\&#?8467;/\$\\ell\$/gs;	# SCRIPT SMALL L
+  s/\&empty;|\&#?8709;/\$\\emptyset\$/gs;	# EMPTY SET
+  s/\&gimel;|\&#?8503;/\$\\gimel\$/gs;	# GIMEL SYMBOL
+  s/\&image;|\&#?8465;/\$\\Im\$/gs;	# BLACK-LETTER CAPITAL I
+  s/\&inodot;/\$\\imath\$/gs;
+  s/\&jnodot;/\$\\jmath\$/gs;
+  s/\&nexist;|\&#?8708;/\$\\nexists\$/gs;	# THERE DOES NOT EXIST
+  s/\&oS;|\&#?9416;/\\textcircled\{S\}/gs;	# CIRCLED LATIN CAPITAL LETTER S
+  s/\&planck;|\&#?8463;/\$\\hbar\$/gs;	# PLANCK CONSTANT OVER TWO PI
+  s/\&real;|\&#?8476;/\$\\Re\$/gs;	# BLACK-LETTER CAPITAL R
+  s/\&sbsol;|\&#?65128;/\$\\smallsetminus\$/gs;	# SMALL REVERSE SOLIDUS
+  s/\&vprime;/\$\{'\}\$/gs;
+  s/\&weierp;|\&#?8472;/\$\\wp\$/gs;	# SCRIPT CAPITAL P
+  s/\&amalg;|\&#?8720;/\$\\amalg\$/gs;	# N-ARY COPRODUCT
+  s/\&Barwed;|\&#?8966;/\$\\doublebarwedge\$/gs;	# PERSPECTIVE
+  s/\&barwed;|\&#?8892;/\$\\barwedge\$/gs;	# NAND
+  s/\&Cap;|\&#?8914;/\$\\Cap\$/gs;	# DOUBLE INTERSECTION
+  s/\&Cup;|\&#?8915;/\$\\Cup\$/gs;	# DOUBLE UNION
+  s/\&cuvee;|\&#?8910;/\$\\curlyvee\$/gs;	# CURLY LOGICAL OR
+  s/\&cuwed;|\&#?8911;/\$\\curlywedge\$/gs;	# CURLY LOGICAL AND
+  s/\&diam;|\&#?8900;/\$\\diamond\$/gs;	# DIAMOND OPERATOR
+  s/\&divonx;|\&#?8903;/\$\\divideontimes\$/gs;	# DIVISION TIMES
+  s/\&intcal;|\&#?8890;/\$\\intercal\$/gs;	# INTERCALATE
+  s/\&lthree;|\&#?8907;/\$\\leftthreetimes\$/gs;	# LEFT SEMIDIRECT PRODUCT
+  s/\&ltimes;|\&#?8905;/\$\\ltimes\$/gs;	# LEFT NORMAL FACTOR SEMIDIRECT PRODUCT
+  s/\&minusb;|\&#?8863;/\$\\boxminus\$/gs;	# SQUARED MINUS
+  s/\&oast;|\&#?8859;/\$\\circledast\$/gs;	# CIRCLED ASTERISK OPERATOR
+  s/\&ocir;|\&#?8858;/\$\\circledcirc\$/gs;	# CIRCLED RING OPERATOR
+  s/\&odash;|\&#?8861;/\$\\circleddash\$/gs;	# CIRCLED DASH
+  s/\&odot;|\&#?8857;/\$\\odot\$/gs;	# CIRCLED DOT OPERATOR
+  s/\&ominus;|\&#?8854;/\$\\ominus\$/gs;	# CIRCLED MINUS
+  s/\&oplus;|\&#?8853;/\$\\oplus\$/gs;	# CIRCLED PLUS
+  s/\&osol;|\&#?8856;/\$\\oslash\$/gs;	# CIRCLED DIVISION SLASH
+  s/\&otimes;|\&#?8855;/\$\\otimes\$/gs;	# CIRCLED TIMES
+  s/\&plusb;|\&#?8862;/\$\\boxplus\$/gs;	# SQUARED PLUS
+  s/\&plusdo;|\&#?8724;/\$\\dotplus\$/gs;	# DOT PLUS
+  s/\&rthree;|\&#?8908;/\$\\rightthreetimes\$/gs;	# RIGHT SEMIDIRECT PRODUCT
+  s/\&rtimes;|\&#?8906;/\$\\rtimes\$/gs;	# RIGHT NORMAL FACTOR SEMIDIRECT PRODUCT
+  s/\&sdot;|\&#?8901;/\$\\cdot\$/gs;	# DOT OPERATOR
+  s/\&sdotb;|\&#?8865;/\$\\boxdot\$/gs;	# SQUARED DOT OPERATOR
+  s/\&setmn;|\&#?8726;/\$\\setminus\$/gs;	# SET MINUS
+  s/\&sqcap;|\&#?8851;/\$\\sqcap\$/gs;	# SQUARE CAP
+  s/\&sqcup;|\&#?8852;/\$\\sqcup\$/gs;	# SQUARE CUP
+  s/\&ssetmn;/\$\\smallsetminus\$/gs;
+  s/\&sstarf;|\&#?8902;/\$\\star\$/gs;	# STAR OPERATOR
+  s/\&timesb;|\&#?8864;/\$\\boxtimes\$/gs;	# SQUARED TIMES
+  s/\&top;|\&#?8868;/\$\\top\$/gs;	# DOWN TACK
+  s/\&uplus;|\&#?8846;/\$\\uplus\$/gs;	# MULTISET UNION
+  s/\&wreath;|\&#?8768;/\$\\wr\$/gs;	# WREATH PRODUCT
+  s/\&xcirc;|\&#?9711;/\{\\textbigcircle\}/gs;	# LARGE CIRCLE
+  s/\&xdtri;|\&#?9661;/\$\\bigtriangledown\$/gs;	# WHITE DOWN-POINTING TRIANGLE
+  s/\&xutri;|\&#?9651;/\$\\bigtriangleup\$/gs;	# WHITE UP-POINTING TRIANGLE
+  s/\&coprod;|\&#?8720;/\$\\coprod\$/gs;	# N-ARY COPRODUCT
+  s/\&prod;|\&#?8719;/\$\\prod\$/gs;	# N-ARY PRODUCT
+  s/\&sum;|\&#?8721;/\$\\sum\$/gs;	# N-ARY SUMMATION
+  s/\&ape;|\&#?8778;/\$\\approxeq\$/gs;	# ALMOST EQUAL OR EQUAL TO
+  s/\&asymp;|\&#?8781;/\$\\asymp\$/gs;	# EQUIVALENT TO
+  s/\&bcong;|\&#?8780;/\$\\backcong\$/gs;	# ALL EQUAL TOcheck unicode
+  s/\&bepsi;|\&#?8717;/\$\\backepsilon\$/gs;	# SMALL CONTAINS AS MEMBER
+  s/\&bowtie;|\&#?8904;/\$\\bowtie\$/gs;	# BOWTIE
+  s/\&bsim;|\&#?8765;/\$\\backsim\$/gs;	# REVERSED TILDE
+  s/\&bsime;|\&#?8909;/\$\\backsimeq\$/gs;	# REVERSED TILDE EQUALS
+  s/\&bump;|\&#?8782;/\$\\Bumpeq\$/gs;	# GEOMETRICALLY EQUIVALENT TO
+  s/\&bumpe;|\&#?8783;/\$\\bumpeq\$/gs;	# DIFFERENCE BETWEENcheck unicode
+  s/\&cire;|\&#?8791;/\$\\circeq\$/gs;	# RING EQUAL TO
+  s/\&colone;|\&#?8788;/\$:=\$/gs;	# COLON EQUALS
+  s/\&cuepr;|\&#?8926;/\$\\curlyeqprec\$/gs;	# EQUAL TO OR PRECEDES
+  s/\&cuesc;|\&#?8927;/\$\\curlyeqsucc\$/gs;	# EQUAL TO OR SUCCEEDS
+  s/\&cupre;|\&#?8828;/\$\\preccurlyeq\$/gs;	# PRECEDES OR EQUAL TO
+  s/\&dashv;|\&#?8867;/\$\\dashv\$/gs;	# LEFT TACK
+  s/\&ecir;|\&#?8790;/\$\\eqcirc\$/gs;	# RING IN EQUAL TO
+  s/\&ecolon;|\&#?8789;/\$=:\$/gs;	# EQUALS COLON
+  s/\&eDot;|\&#?8785;/\$\\doteqdot\$/gs;	# GEOMETRICALLY EQUAL TO
+  s/\&esdot;|\&#?8784;/\$\\doteq\$/gs;	# APPROACHES THE LIMIT
+  s/\&efDot;|\&#?8786;/\$\\fallingdotseq\$/gs;	# APPROXIMATELY EQUAL TO OR THE IMAGE OF
+  s/\&egs;|\&#?8925;/\$\\eqslantgtr\$/gs;	# EQUAL TO OR GREATER-THAN
+  s/\&els;|\&#?8924;/\$\\eqslantless\$/gs;	# EQUAL TO OR LESS-THAN
+  s/\&erDot;|\&#?8787;/\$\\risingdotseq\$/gs;	# IMAGE OF OR APPROXIMATELY EQUAL TO
+  s/\&fork;|\&#?8916;/\$\\pitchfork\$/gs;	# PITCHFORK
+  s/\&frown;|\&#?8994;/\$\\frown\$/gs;	# FROWN
+  s/\&gap;/\$\\gtrapprox\$/gs;
+  s/\&gsdot;|\&#?8919;/\$\\gtrdot\$/gs;	# GREATER-THAN WITH DOT
+  s/\&gE;|\&#?8807;/\$\\geqq\$/gs;	# GREATER-THAN OVER EQUAL TO
+  s/\&gel;|\&#?8923;/\$\\gtreqless\$/gs;	# GREATER-THAN EQUAL TO OR LESS-THAN
+  s/\&gEl;|\&#?8923;/\$\\gtreqqless\$/gs;	# GREATER-THAN EQUAL TO OR LESS-THAN
+  s/\&ges;/\$\\geqslant\$/gs;
+  s/\&Gg;|\&#?8921;/\$\\ggg\$/gs;	# VERY MUCH GREATER-THAN
+  s/\&gl;|\&#?8823;/\$\\gtrless\$/gs;	# GREATER-THAN OR LESS-THAN
+  s/\&gsim;|\&#?8819;/\$\\gtrsim\$/gs;	# GREATER-THAN OR EQUIVALENT TO
+  s/\&Gt;|\&#?8811;/\$\\gg\$/gs;	# MUCH GREATER-THAN
+  s/\&lap;/\$\\lessapprox\$/gs;
+  s/\&ldot;|\&#?8918;/\$\\lessdot\$/gs;	# LESS-THAN WITH DOT
+  s/\&lE;|\&#?8806;/\$\\leqq\$/gs;	# LESS-THAN OVER EQUAL TO
+  s/\&lEg;|\&#?8922;/\$\\lesseqqgtr\$/gs;	# LESS-THAN EQUAL TO OR GREATER-THAN
+  s/\&leg;|\&#?8922;/\$\\lesseqgtr\$/gs;	# LESS-THAN EQUAL TO OR GREATER-THAN
+  s/\&les;/\$\\leqslant\$/gs;
+  s/\&lg;|\&#?8822;/\$\\lessgtr\$/gs;	# LESS-THAN OR GREATER-THAN
+  s/\&Ll;|\&#?8920;/\$\\lll\$/gs;	# VERY MUCH LESS-THAN
+  s/\&lsim;|\&#?8818;/\$\\lesssim\$/gs;	# LESS-THAN OR EQUIVALENT TO
+  s/\&Lt;|\&#?8810;/\$\\ll\$/gs;	# MUCH LESS-THAN
+  s/\&ltrie;|\&#?8884;/\$\\trianglelefteq\$/gs;	# NORMAL SUBGROUP OF OR EQUAL TO
+  s/\&mid;|\&#?8739;/\$\\mid\$/gs;	# DIVIDES
+  s/\&models;|\&#?8871;/\$\\models\$/gs;	# MODELS
+  s/\&pr;|\&#?8826;/\$\\prec\$/gs;	# PRECEDES
+  s/\&prap;/\$\\precapprox\$/gs;
+  s/\&pre;|\&#?8828;/\$\\preceq\$/gs;	# PRECEDES OR EQUAL TO
+  s/\&prsim;|\&#?8830;/\$\\precsim\$/gs;	# PRECEDES OR EQUIVALENT TO
+  s/\&rtrie;|\&#?8885;/\$\\trianglerighteq\$/gs;	# CONTAINS AS NORMAL SUBGROUP OR EQUAL TO
+  s/\&samalg;/\$\\amalg\$/gs;
+  s/\&sc;|\&#?8827;/\$\\succ\$/gs;	# SUCCEEDS
+  s/\&scap;/\$\\succapprox\$/gs;
+  s/\&sccue;|\&#?8829;/\$\\succcurlyeq\$/gs;	# SUCCEEDS OR EQUAL TO
+  s/\&sce;|\&#?8829;/\$\\succeq\$/gs;	# SUCCEEDS OR EQUAL TO
+  s/\&scsim;|\&#?8831;/\$\\succsim\$/gs;	# SUCCEEDS OR EQUIVALENT TO
+  s/\&sfrown;/\$\\smallfrown\$/gs;
+  s/\&smid;/\$\\shortmid\$/gs;
+  s/\&smile;|\&#?8995;/\$\\smile\$/gs;	# SMILE
+  s/\&spar;/\$\\shortparallel\$/gs;
+  s/\&sqsub;|\&#?8847;/\$\\sqsubset\$/gs;	# SQUARE IMAGE OF
+  s/\&sqsube;|\&#?8849;/\$\\sqsubseteq\$/gs;	# SQUARE IMAGE OF OR EQUAL TO
+  s/\&sqsup;|\&#?8848;/\$\\sqsupset\$/gs;	# SQUARE ORIGINAL OF
+  s/\&sqsupe;|\&#?8850;/\$\\sqsupseteq\$/gs;	# SQUARE ORIGINAL OF OR EQUAL TO
+  s/\&ssmile;/\$\\smallsmile\$/gs;
+  s/\&Sub;|\&#?8912;/\$\\Subset\$/gs;	# DOUBLE SUBSET
+  s/\&subE;|\&#?8838;/\$\\subseteqq\$/gs;	# SUBSET OF OR EQUAL TO
+  s/\&Sup;|\&#?8913;/\$\\Supset\$/gs;	# DOUBLE SUPERSET
+  s/\&supE;|\&#?8839;/\$\\supseteqq\$/gs;	# SUPERSET OF OR EQUAL TO
+  s/\&thkap;/\$\\thickapprox\$/gs;
+  s/\&thksim;/\$\\thicksim\$/gs;
+  s/\&trie;|\&#?8796;/\$\\triangleq\$/gs;	# DELTA EQUAL TO
+  s/\&twixt;|\&#?8812;/\$\\between\$/gs;	# BETWEEN
+  s/\&vdash;|\&#?8866;/\$\\vdash\$/gs;	# RIGHT TACK
+  s/\&Vdash;|\&#?8873;/\$\\Vdash\$/gs;	# FORCES
+  s/\&vDash;|\&#?8872;/\$\\vDash\$/gs;	# TRUE
+  s/\&veebar;|\&#?8891;/\$\\veebar\$/gs;	# XOR
+  s/\&vltri;|\&#?8882;/\$\\vartriangleleft\$/gs;	# NORMAL SUBGROUP OF
+  s/\&vprop;|\&#?8733;/\$\\varpropto\$/gs;	# PROPORTIONAL TO
+  s/\&vrtri;|\&#?8883;/\$\\vartriangleright\$/gs;	# CONTAINS AS NORMAL SUBGROUP
+  s/\&Vvdash;|\&#?8874;/\$\\Vvdash\$/gs;	# TRIPLE VERTICAL BAR RIGHT TURNSTILE
+  s/\&gnap;/\$\\gnapprox\$/gs;
+  s/\&gne;|\&#?8809;/\$\\gneq\$/gs;	# GREATER-THAN BUT NOT EQUAL TO
+  s/\&gnE;|\&#?8809;/\$\\gneqq\$/gs;	# GREATER-THAN BUT NOT EQUAL TO
+  s/\&gnsim;|\&#?8935;/\$\\gnsim\$/gs;	# GREATER-THAN BUT NOT EQUIVALENT TO
+  s/\&gvnE;|\&#?8809;/\$\\gvertneqq\$/gs;	# GREATER-THAN BUT NOT EQUAL TO
+  s/\&lnap;/\$\\lnapprox\$/gs;
+  s/\&lnE;|\&#?8808;/\$\\lneqq\$/gs;	# LESS-THAN BUT NOT EQUAL TO
+  s/\&lne;|\&#?8808;/\$\\lneq\$/gs;	# LESS-THAN BUT NOT EQUAL TO
+  s/\&lnsim;|\&#?8934;/\$\\lnsim\$/gs;	# LESS-THAN BUT NOT EQUIVALENT TO
+  s/\&lvnE;|\&#?8808;/\$\\lvertneqq\$/gs;	# LESS-THAN BUT NOT EQUAL TO
+  s/\&nap;|\&#?8777;/\$\\not\\approx\$/gs;	# NOT ALMOST EQUAL TO
+  s/\&ncong;|\&#?8775;/\$\\not\\cong\$/gs;	# NEITHER APPROXIMATELY NOR ACTUALLY EQUAL TO
+  s/\&nequiv;|\&#?8802;/\$\\not\\equiv\$/gs;	# NOT IDENTICAL TO
+  s/\&ngE;/\$\\ngeqq\$/gs;
+  s/\&nge;|\&#?8817;/\$\\not\\geq\$/gs;	# NEITHER GREATER-THAN NOR EQUAL TO
+  s/\&nges;|\&#?8817;/\$\\ngeqslant\$/gs;	# NEITHER GREATER-THAN NOR EQUAL TO
+  s/\&ngt;|\&#?8815;/\$\\not>\$/gs;	# NOT GREATER-THAN
+  s/\&nle;|\&#?8816;/\$\\not\\leq\$/gs;	# NEITHER LESS-THAN NOR EQUAL TO
+  s/\&nlE;/\$\\nleqq\$/gs;
+  s/\&nles;|\&#?8816;/\$\\nleqslant\$/gs;	# NEITHER LESS-THAN NOR EQUAL TO
+  s/\&nlt;|\&#?8814;/\$\\not<\$/gs;	# NOT LESS-THAN
+  s/\&nltri;|\&#?8938;/\$\\ntriangleleft\$/gs;	# NOT NORMAL SUBGROUP OF
+  s/\&nltrie;|\&#?8940;/\$\\ntrianglelefteq\$/gs;	# NOT NORMAL SUBGROUP OF OR EQUAL TO
+  s/\&nmid;|\&#?8740;/\$\\nmid\$/gs;	# DOES NOT DIVIDE
+  s/\&npar;|\&#?8742;/\$\\nparallel\$/gs;	# NOT PARALLEL TO
+  s/\&npr;|\&#?8832;/\$\\not\\prec\$/gs;	# DOES NOT PRECEDE
+  s/\&npre;|\&#?8928;/\$\\not\\preceq\$/gs;	# DOES NOT PRECEDE OR EQUAL
+  s/\&nrtri;|\&#?8939;/\$\\ntriangleright\$/gs;	# DOES NOT CONTAIN AS NORMAL SUBGROUP
+  s/\&nrtrie;|\&#?8941;/\$\\ntrianglerighteq\$/gs;	# DOES NOT CONTAIN AS NORMAL SUBGROUP OR EQUAL
+  s/\&nsc;|\&#?8833;/\$\\not\\succ\$/gs;	# DOES NOT SUCCEED
+  s/\&nsce;|\&#?8929;/\$\\not\\succeq\$/gs;	# DOES NOT SUCCEED OR EQUAL
+  s/\&nsim;|\&#?8769;/\$\\not\\sim\$/gs;	# NOT TILDE
+  s/\&nsime;|\&#?8772;/\$\\not\\simeq\$/gs;	# NOT ASYMPTOTICALLY EQUAL TO
+  s/\&nsmid;/\$\\nshortmid\$/gs;
+  s/\&nspar;/\$\\nshortparallel\$/gs;
+  s/\&nsub;|\&#?8836;/\$\\not\\subset\$/gs;	# NOT A SUBSET OF
+  s/\&nsube;|\&#?8840;/\$\\not\\subseteq\$/gs;	# NEITHER A SUBSET OF NOR EQUAL TO
+  s/\&nsubE;|\&#?8840;/\$\\nsubseteqq\$/gs;	# NEITHER A SUBSET OF NOR EQUAL TO
+  s/\&nsup;|\&#?8837;/\$\\not\\supset\$/gs;	# NOT A SUPERSET OF
+  s/\&nsupE;|\&#?8841;/\$\\nsupseteqq\$/gs;	# NEITHER A SUPERSET OF NOR EQUAL TO
+  s/\&nsupe;|\&#?8841;/\$\\not\\supseteq\$/gs;	# NEITHER A SUPERSET OF NOR EQUAL TO
+  s/\&nvdash;|\&#?8876;/\$\\nvdash\$/gs;	# DOES NOT PROVE
+  s/\&nvDash;|\&#?8877;/\$\\nvDash\$/gs;	# NOT TRUE
+  s/\&nVDash;|\&#?8879;/\$\\nVDash\$/gs;	# NEGATED DOUBLE VERTICAL BAR DOUBLE RIGHT TURNSTILE
+  s/\&nVdash;|\&#?8878;/\$\\nVdash\$/gs;	# DOES NOT FORCE
+  s/\&prnap;/\$\\precnapprox\$/gs;
+  s/\&prnE;/\$\\precneqq\$/gs;
+  s/\&prnsim;|\&#?8936;/\$\\precnsim\$/gs;	# PRECEDES BUT NOT EQUIVALENT TO
+  s/\&scnap;/\$\\succnapprox\$/gs;
+  s/\&scnE;/\$\\succneqq\$/gs;
+  s/\&scnsim;|\&#?8937;/\$\\succnsim\$/gs;	# SUCCEEDS BUT NOT EQUIVALENT TO
+  s/\&subne;|\&#?8842;/\$\\subsetneq\$/gs;	# TRUEcheck unicode mapping
+  s/\&subnE;|\&#?8842;/\$\\subsetneqq\$/gs;	# TRUE
+  s/\&supne;|\&#?8843;/\$\\supsetneq\$/gs;	# SUPERSET OF WITH NOT EQUAL TO
+  s/\&supnE;|\&#?8843;/\$\\supsetneqq\$/gs;	# SUPERSET OF WITH NOT EQUAL TO
+  s/\&vsubnE;/\$\\varsubsetneqq\$/gs;
+  s/\&vsubne;/\$\\varsubsetneq\$/gs;
+  s/\&vsupne;/\$\\varsupsetneq\$/gs;
+  s/\&vsupnE;/\$\\varsupsetneqq\$/gs;
+  s/\&cularr;|\&#?8630;/\$\\curvearrowleft\$/gs;	# ANTICLOCKWISE TOP SEMICIRCLE ARROW
+  s/\&curarr;|\&#?8631;/\$\\curvearrowright\$/gs;	# CLOCKWISE TOP SEMICIRCLE ARROW
+  s/\&dArr;|\&#?8659;/\$\\Downarrow\$/gs;	# DOWNWARDS DOUBLE ARROW
+  s/\&darr2;|\&#?8650;/\$\\downdownarrows\$/gs;	# DOWNWARDS PAIRED ARROWS
+  s/\&dharl;|\&#?8643;/\$\\downharpoonleft\$/gs;	# DOWNWARDS HARPOON WITH BARB LEFTWARDS
+  s/\&dharr;|\&#?8642;/\$\\downharpoonright\$/gs;	# DOWNWARDS HARPOON WITH BARB RIGHTWARDS
+  s/\&lAarr;|\&#?8666;/\$\\Lleftarrow\$/gs;	# LEFTWARDS TRIPLE ARROW
+  s/\&Larr;|\&#?8606;/\$\\twoheadleftarrow\$/gs;	# LEFTWARDS TWO HEADED ARROW
+  s/\&larr2;|\&#?8647;/\$\\leftleftarrows\$/gs;	# LEFTWARDS PAIRED ARROWS
+  s/\&larrhk;|\&#?8617;/\$\\hookleftarrow\$/gs;	# LEFTWARDS ARROW WITH HOOK
+  s/\&larrlp;|\&#?8619;/\$\\looparrowleft\$/gs;	# LEFTWARDS ARROW WITH LOOP
+  s/\&larrtl;|\&#?8610;/\$\\leftarrowtail\$/gs;	# LEFTWARDS ARROW WITH TAIL
+  s/\&lhard;|\&#?8637;/\$\\leftharpoondown\$/gs;	# LEFTWARDS HARPOON WITH BARB DOWNWARDS
+  s/\&lharu;|\&#?8636;/\$\\leftharpoonup\$/gs;	# LEFTWARDS HARPOON WITH BARB UPWARDS
+  s/\&hArr;|\&#?8660;/\$\\Leftrightarrow\$/gs;	# LEFT RIGHT DOUBLE ARROW
+  s/\&harr;|\&#?8596;/\$\\leftrightarrow\$/gs;	# LEFT RIGHT ARROW
+  s/\&lrarr2;|\&#?8646;/\$\\leftrightarrows\$/gs;	# LEFTWARDS ARROW OVER RIGHTWARDS ARROW
+  s/\&rlarr2;|\&#?8644;/\$\\rightleftarrows\$/gs;	# RIGHTWARDS ARROW OVER LEFTWARDS ARROW
+  s/\&harrw;|\&#?8621;/\$\\leftrightsquigarrow\$/gs;	# LEFT RIGHT WAVE ARROW
+  s/\&rlhar2;|\&#?8652;/\$\\rightleftharpoons\$/gs;	# RIGHTWARDS HARPOON OVER LEFTWARDS HARPOON
+  s/\&lrhar2;|\&#?8651;/\$\\leftrightharpoons\$/gs;	# LEFTWARDS HARPOON OVER RIGHTWARDS HARPOON
+  s/\&lsh;|\&#?8624;/\$\\Lsh\$/gs;	# UPWARDS ARROW WITH TIP LEFTWARDS
+  s/\&map;|\&#?8614;/\$\\mapsto\$/gs;	# RIGHTWARDS ARROW FROM BAR
+  s/\&mumap;|\&#?8888;/\$\\multimap\$/gs;	# MULTIMAP
+  s/\&nearr;|\&#?8599;/\$\\nearrow\$/gs;	# NORTH EAST ARROW
+  s/\&nlArr;|\&#?8653;/\$\\nLeftarrow\$/gs;	# LEFTWARDS DOUBLE ARROW WITH STROKE
+  s/\&nlarr;|\&#?8602;/\$\\nleftarrow\$/gs;	# LEFTWARDS ARROW WITH STROKE
+  s/\&nhArr;|\&#?8654;/\$\\nLeftrightarrow\$/gs;	# LEFT RIGHT DOUBLE ARROW WITH STROKE
+  s/\&nharr;|\&#?8622;/\$\\nleftrightarrow\$/gs;	# LEFT RIGHT ARROW WITH STROKE
+  s/\&nrarr;|\&#?8603;/\$\\nrightarrow\$/gs;	# RIGHTWARDS ARROW WITH STROKE
+  s/\&nrArr;|\&#?8655;/\$\\nRightarrow\$/gs;	# RIGHTWARDS DOUBLE ARROW WITH STROKE
+  s/\&nwarr;|\&#?8598;/\$\\nwarrow\$/gs;	# NORTH WEST ARROW
+  s/\&olarr;|\&#?8634;/\$\\circlearrowleft\$/gs;	# ANTICLOCKWISE OPEN CIRCLE ARROW
+  s/\&orarr;|\&#?8635;/\$\\circlearrowright\$/gs;	# CLOCKWISE OPEN CIRCLE ARROW
+  s/\&rAarr;|\&#?8667;/\$\\Rrightarrow\$/gs;	# RIGHTWARDS TRIPLE ARROW
+  s/\&Rarr;|\&#?8608;/\$\\twoheadrightarrow\$/gs;	# RIGHTWARDS TWO HEADED ARROW
+  s/\&rarr2;|\&#?8649;/\$\\rightrightarrows\$/gs;	# RIGHTWARDS PAIRED ARROWS
+  s/\&rarrhk;|\&#?8618;/\$\\hookrightarrow\$/gs;	# RIGHTWARDS ARROW WITH HOOK
+  s/\&rarrlp;|\&#?8620;/\$\\looparrowright\$/gs;	# RIGHTWARDS ARROW WITH LOOP
+  s/\&rarrtl;|\&#?8611;/\$\\rightarrowtail\$/gs;	# RIGHTWARDS ARROW WITH TAIL
+  s/\&rarrw;|\&#?8669;/\$\\rightsquigarrow\$/gs;	# RIGHTWARDS SQUIGGLE ARROW
+  s/\&rhard;|\&#?8641;/\$\\rightharpoondown\$/gs;	# RIGHTWARDS HARPOON WITH BARB DOWNWARDS
+  s/\&rharu;|\&#?8640;/\$\\rightharpoonup\$/gs;	# RIGHTWARDS HARPOON WITH BARB UPWARDS
+  s/\&rsh;|\&#?8625;/\$\\Rsh\$/gs;	# UPWARDS ARROW WITH TIP RIGHTWARDS
+  s/\&drarr;|\&#?8600;/\$\\searrow\$/gs;	# SOUTH EAST ARROW
+  s/\&dlarr;|\&#?8601;/\$\\swarrow\$/gs;	# SOUTH WEST ARROW
+  s/\&uArr;|\&#?8657;/\$\\Uparrow\$/gs;	# UPWARDS DOUBLE ARROW
+  s/\&uarr2;|\&#?8648;/\$\\upuparrows\$/gs;	# UPWARDS PAIRED ARROWS
+  s/\&vArr;|\&#?8661;/\$\\Updownarrow\$/gs;	# UP DOWN DOUBLE ARROW
+  s/\&varr;|\&#?8597;/\$\\updownarrow\$/gs;	# UP DOWN ARROW
+  s/\&uharl;|\&#?8639;/\$\\upharpoonleft\$/gs;	# UPWARDS HARPOON WITH BARB LEFTWARDS
+  s/\&uharr;|\&#?8638;/\$\\upharpoonright\$/gs;	# UPWARDS HARPOON WITH BARB RIGHTWARDS
+  s/\&xlArr;/\$\\Longleftarrow\$/gs;
+  s/\&xhArr;/\$\\Longleftrightarrow\$/gs;
+  s/\&xharr;/\$\\longleftrightarrow\$/gs;
+  s/\&xrArr;/\$\\Longrightarrow\$/gs;
+  s/\&rceil;|\&#?8969;/\$\\rceil\$/gs;	# RIGHT CEILING
+  s/\&rfloor;|\&#?8971;/\$\\rfloor\$/gs;	# RIGHT FLOOR
+  s/\&rpargt;/\$\\rlap\{\$>\$\}\\,\)\$/gs;
+  s/\&urcorn;|\&#?8989;/\$\\urcorner\$/gs;	# TOP RIGHT CORNER
+  s/\&drcorn;|\&#?8991;/\$\\lrcorner\$/gs;	# BOTTOM RIGHT CORNER
+  s/\&lceil;|\&#?8968;/\$\\lceil\$/gs;	# LEFT CEILING
+  s/\&lfloor;|\&#?8970;/\$\\lfloor\$/gs;	# LEFT FLOOR
+  s/\&lpargt;/\$\\rlap\{\$>\$\}\\,\(\$/gs;
+  s/\&ulcorn;|\&#?8988;/\$\\ulcorner\$/gs;	# TOP LEFT CORNER
+  s/\&dlcorn;|\&#?8990;/\$\\llcorner\$/gs;	# BOTTOM LEFT CORNER
+  s/\&aacute;|\&#?225;/\\'\{a\}/gs;	# LATIN SMALL LETTER A WITH ACUTE
+  s/\&Aacute;|\&#?193;/\\'\{A\}/gs;	# LATIN CAPITAL LETTER A WITH ACUTE
+  s/\&acirc;|\&#?226;/\\\^\{a\}/gs;	# LATIN SMALL LETTER A WITH CIRCUMFLEX
+  s/\&Acirc;|\&#?194;/\\\^\{A\}/gs;	# LATIN CAPITAL LETTER A WITH CIRCUMFLEX
+  s/\&agrave;|\&#?224;/\\`\{a\}/gs;	# LATIN SMALL LETTER A WITH GRAVE
+  s/\&Agrave;|\&#?192;/\\`\{A\}/gs;	# LATIN CAPITAL LETTER A WITH GRAVE
+  s/\&aring;|\&#?229;/\{\\aa\}/gs;	# LATIN SMALL LETTER A WITH RING ABOVE
+  s/\&Aring;|\&#?197;/\{\\AA\}/gs;	# LATIN CAPITAL LETTER A WITH RING ABOVE
+  s/\&atilde;|\&#?227;/\\~\{a\}/gs;	# LATIN SMALL LETTER A WITH TILDE
+  s/\&Atilde;|\&#?195;/\\~\{A\}/gs;	# LATIN CAPITAL LETTER A WITH TILDE
+  s/\&auml;|\&#?228;/\\"\{a\}/gs;	# LATIN SMALL LETTER A WITH DIAERESIS
+  s/\&Auml;|\&#?196;/\\"\{A\}/gs;	# LATIN CAPITAL LETTER A WITH DIAERESIS
+  s/\&aelig;|\&#?230;/\{\\ae\}/gs;	# LATIN SMALL LETTER AE
+  s/\&AElig;|\&#?198;/\{\\AE\}/gs;	# LATIN CAPITAL LETTER AE
+  s/\&ccedil;|\&#?231;/\\c\{c\}/gs;	# LATIN SMALL LETTER C WITH CEDILLA
+  s/\&Ccedil;|\&#?199;/\\c\{C\}/gs;	# LATIN CAPITAL LETTER C WITH CEDILLA
+  s/\&eth;|\&#?240;/\{\\dh\}/gs;	# LATIN SMALL LETTER ETH
+  s/\&ETH;|\&#?208;/\{\\DH\}/gs;	# LATIN CAPITAL LETTER ETH
+  s/\&eacute;|\&#?233;/\\'\{e\}/gs;	# LATIN SMALL LETTER E WITH ACUTE
+  s/\&Eacute;|\&#?201;/\\'\{E\}/gs;	# LATIN CAPITAL LETTER E WITH ACUTE
+  s/\&ecirc;|\&#?234;/\\\^\{e\}/gs;	# LATIN SMALL LETTER E WITH CIRCUMFLEX
+  s/\&Ecirc;|\&#?202;/\\\^\{E\}/gs;	# LATIN CAPITAL LETTER E WITH CIRCUMFLEX
+  s/\&egrave;|\&#?232;/\\`\{e\}/gs;	# LATIN SMALL LETTER E WITH GRAVE
+  s/\&Egrave;|\&#?200;/\\`\{E\}/gs;	# LATIN CAPITAL LETTER E WITH GRAVE
+  s/\&euml;|\&#?235;/\\"\{e\}/gs;	# LATIN SMALL LETTER E WITH DIAERESIS
+  s/\&Euml;|\&#?203;/\\"\{E\}/gs;	# LATIN CAPITAL LETTER E WITH DIAERESIS
+  s/\&iacute;|\&#?237;/\\'\{\\i\}/gs;	# LATIN SMALL LETTER I WITH ACUTE
+  s/\&Iacute;|\&#?205;/\\'\{I\}/gs;	# LATIN CAPITAL LETTER I WITH ACUTE
+  s/\&icirc;|\&#?238;/\\\^\{\\i\}/gs;	# LATIN SMALL LETTER I WITH CIRCUMFLEX
+  s/\&Icirc;|\&#?206;/\\\^\{I\}/gs;	# LATIN CAPITAL LETTER I WITH CIRCUMFLEX
+  s/\&igrave;|\&#?236;/\\`\{\\i\}/gs;	# LATIN SMALL LETTER I WITH GRAVE
+  s/\&Igrave;|\&#?204;/\\`\{I\}/gs;	# LATIN CAPITAL LETTER I WITH GRAVE
+  s/\&iuml;|\&#?239;/\\"\{\\i\}/gs;	# LATIN SMALL LETTER I WITH DIAERESIS
+  s/\&Iuml;|\&#?207;/\\"\{I\}/gs;	# LATIN CAPITAL LETTER I WITH DIAERESIS
+  s/\&ntilde;|\&#?241;/\\~\{n\}/gs;	# LATIN SMALL LETTER N WITH TILDE
+  s/\&Ntilde;|\&#?209;/\\~\{N\}/gs;	# LATIN CAPITAL LETTER N WITH TILDE
+  s/\&oacute;|\&#?243;/\\'\{o\}/gs;	# LATIN SMALL LETTER O WITH ACUTE
+  s/\&Oacute;|\&#?211;/\\'\{O\}/gs;	# LATIN CAPITAL LETTER O WITH ACUTE
+  s/\&ocirc;|\&#?244;/\\\^\{o\}/gs;	# LATIN SMALL LETTER O WITH CIRCUMFLEX
+  s/\&Ocirc;|\&#?212;/\\\^\{O\}/gs;	# LATIN CAPITAL LETTER O WITH CIRCUMFLEX
+  s/\&ograve;|\&#?242;/\\`\{o\}/gs;	# LATIN SMALL LETTER O WITH GRAVE
+  s/\&Ograve;|\&#?210;/\\`\{O\}/gs;	# LATIN CAPITAL LETTER O WITH GRAVE
+  s/\&oslash;|\&#?248;/\{\\o\}/gs;	# LATIN SMALL LETTER O WITH STROKE
+  s/\&Oslash;|\&#?216;/\{\\O\}/gs;	# LATIN CAPITAL LETTER O WITH STROKE
+  s/\&otilde;|\&#?245;/\\~\{o\}/gs;	# LATIN SMALL LETTER O WITH TILDE
+  s/\&Otilde;|\&#?213;/\\~\{O\}/gs;	# LATIN CAPITAL LETTER O WITH TILDE
+  s/\&ouml;|\&#?246;/\\"\{o\}/gs;	# LATIN SMALL LETTER O WITH DIAERESIS
+  s/\&Ouml;|\&#?214;/\\"\{O\}/gs;	# LATIN CAPITAL LETTER O WITH DIAERESIS
+  s/\&szlig;|\&#?223;/\{\\ss\}/gs;	# LATIN SMALL LETTER SHARP S
+  s/\&thorn;|\&#?254;/\{\\th\}/gs;	# LATIN SMALL LETTER THORN
+  s/\&THORN;|\&#?222;/\{\\TH\}/gs;	# LATIN CAPITAL LETTER THORN
+  s/\&uacute;|\&#?250;/\\'\{u\}/gs;	# LATIN SMALL LETTER U WITH ACUTE
+  s/\&Uacute;|\&#?218;/\\'\{U\}/gs;	# LATIN CAPITAL LETTER U WITH ACUTE
+  s/\&ucirc;|\&#?251;/\\\^\{u\}/gs;	# LATIN SMALL LETTER U WITH CIRCUMFLEX
+  s/\&Ucirc;|\&#?219;/\\\^\{U\}/gs;	# LATIN CAPITAL LETTER U WITH CIRCUMFLEX
+  s/\&ugrave;|\&#?249;/\\`\{u\}/gs;	# LATIN SMALL LETTER U WITH GRAVE
+  s/\&Ugrave;|\&#?217;/\\`\{U\}/gs;	# LATIN CAPITAL LETTER U WITH GRAVE
+  s/\&uuml;|\&#?252;/\\"\{u\}/gs;	# LATIN SMALL LETTER U WITH DIAERESIS
+  s/\&Uuml;|\&#?220;/\\"\{U\}/gs;	# LATIN CAPITAL LETTER U WITH DIAERESIS
+  s/\&yacute;|\&#?253;/\\'\{y\}/gs;	# LATIN SMALL LETTER Y WITH ACUTE
+  s/\&Yacute;|\&#?221;/\\'\{Y\}/gs;	# LATIN CAPITAL LETTER Y WITH ACUTE
+  s/\&yuml;|\&#?255;/\\"\{y\}/gs;	# LATIN SMALL LETTER Y WITH DIAERESIS
+  s/\&abreve;|\&#?259;/\\u\{a\}/gs;	# LATIN SMALL LETTER A WITH BREVE
+  s/\&Abreve;|\&#?258;/\\u\{A\}/gs;	# LATIN CAPITAL LETTER A WITH BREVE
+  s/\&amacr;|\&#?257;/\\=\{a\}/gs;	# LATIN SMALL LETTER A WITH MACRON
+  s/\&Amacr;|\&#?256;/\\=\{A\}/gs;	# LATIN CAPITAL LETTER A WITH MACRON
+  s/\&aogon;|\&#?261;/\\k\{a\}/gs;	# LATIN SMALL LETTER A WITH OGONEK
+  s/\&Aogon;|\&#?260;/\\k\{A\}/gs;	# LATIN CAPITAL LETTER A WITH OGONEK
+  s/\&cacute;|\&#?263;/\\'\{c\}/gs;	# LATIN SMALL LETTER C WITH ACUTE
+  s/\&Cacute;|\&#?262;/\\'\{C\}/gs;	# LATIN CAPITAL LETTER C WITH ACUTE
+  s/\&ccaron;|\&#?269;/\\v\{c\}/gs;	# LATIN SMALL LETTER C WITH CARON
+  s/\&Ccaron;|\&#?268;/\\v\{C\}/gs;	# LATIN CAPITAL LETTER C WITH CARON
+  s/\&ccirc;|\&#?265;/\\\^\{c\}/gs;	# LATIN SMALL LETTER C WITH CIRCUMFLEX
+  s/\&Ccirc;|\&#?264;/\\\^\{C\}/gs;	# LATIN CAPITAL LETTER C WITH CIRCUMFLEX
+  s/\&cdot;|\&#?267;/\\\.\{c\}/gs;	# LATIN SMALL LETTER C WITH DOT ABOVE
+  s/\&Cdot;|\&#?266;/\\\.\{C\}/gs;	# LATIN CAPITAL LETTER C WITH DOT ABOVE
+  s/\&dcaron;|\&#?271;/\\v\{d\}/gs;	# LATIN SMALL LETTER D WITH CARON
+  s/\&Dcaron;|\&#?270;/\\v\{D\}/gs;	# LATIN CAPITAL LETTER D WITH CARON
+  s/\&dstrok;|\&#?273;/\{\\dj\}/gs;	# LATIN SMALL LETTER D WITH STROKE
+  s/\&Dstrok;|\&#?272;/\{\\DJ\}/gs;	# LATIN CAPITAL LETTER D WITH STROKE
+  s/\&ecaron;|\&#?283;/\\v\{e\}/gs;	# LATIN SMALL LETTER E WITH CARON
+  s/\&Ecaron;|\&#?282;/\\v\{E\}/gs;	# LATIN CAPITAL LETTER E WITH CARON
+  s/\&edot;|\&#?279;/\\\.\{e\}/gs;	# LATIN SMALL LETTER E WITH DOT ABOVE
+  s/\&Edot;|\&#?278;/\\\.\{E\}/gs;	# LATIN CAPITAL LETTER E WITH DOT ABOVE
+  s/\&emacr;|\&#?275;/\\=\{e\}/gs;	# LATIN SMALL LETTER E WITH MACRON
+  s/\&Emacr;|\&#?274;/\\=\{E\}/gs;	# LATIN CAPITAL LETTER E WITH MACRON
+  s/\&eogon;|\&#?281;/\\k\{e\}/gs;	# LATIN SMALL LETTER E WITH OGONEK
+  s/\&Eogon;|\&#?280;/\\k\{E\}/gs;	# LATIN CAPITAL LETTER E WITH OGONEK
+  s/\&gacute;|\&#?501;/\\'\{g\}/gs;	# LATIN SMALL LETTER G WITH ACUTE
+  s/\&gbreve;|\&#?287;/\\u\{g\}/gs;	# LATIN SMALL LETTER G WITH BREVE
+  s/\&Gbreve;|\&#?286;/\\u\{G\}/gs;	# LATIN CAPITAL LETTER G WITH BREVE
+  s/\&Gcedil;|\&#?290;/\\c\{G\}/gs;	# LATIN CAPITAL LETTER G WITH CEDILLA
+  s/\&gcirc;|\&#?285;/\\\^\{g\}/gs;	# LATIN SMALL LETTER G WITH CIRCUMFLEX
+  s/\&Gcirc;|\&#?284;/\\\^\{G\}/gs;	# LATIN CAPITAL LETTER G WITH CIRCUMFLEX
+  s/\&gdot;|\&#?289;/\\\.\{g\}/gs;	# LATIN SMALL LETTER G WITH DOT ABOVE
+  s/\&Gdot;|\&#?288;/\\\.\{G\}/gs;	# LATIN CAPITAL LETTER G WITH DOT ABOVE
+  s/\&hcirc;|\&#?293;/\\\^\{h\}/gs;	# LATIN SMALL LETTER H WITH CIRCUMFLEX
+  s/\&Hcirc;|\&#?292;/\\\^\{H\}/gs;	# LATIN CAPITAL LETTER H WITH CIRCUMFLEX
+  s/\&hstrok;|\&#?295;/\{\\hstrok\}/gs;	# LATIN SMALL LETTER H WITH STROKE
+  s/\&Hstrok;|\&#?294;/\{\\Hstrok\}/gs;	# LATIN CAPITAL LETTER H WITH STROKE
+  s/\&Idot;|\&#?304;/\\\.\{I\}/gs;	# LATIN CAPITAL LETTER I WITH DOT ABOVE
+  s/\&Imacr;|\&#?298;/\\=\{I\}/gs;	# LATIN CAPITAL LETTER I WITH MACRON
+  s/\&imacr;|\&#?299;/\\=\{\\i\}/gs;	# LATIN SMALL LETTER I WITH MACRON
+  s/\&ijlig;|\&#?307;/\{i\\kern -\.15em j\}/gs;	# LATIN SMALL LIGATURE IJ
+  s/\&IJlig;|\&#?306;/\{I\\kern -\.15em J\}/gs;	# LATIN CAPITAL LIGATURE IJ
+  s/\&inodot;|\&#?305;/\{\\i\}/gs;	# LATIN SMALL LETTER DOTLESS I
+  s/\&iogon;|\&#?303;/\\k\{i\}/gs;	# LATIN SMALL LETTER I WITH OGONEK
+  s/\&Iogon;|\&#?302;/\\k\{I\}/gs;	# LATIN CAPITAL LETTER I WITH OGONEK
+  s/\&itilde;|\&#?297;/\\~\{\\i\}/gs;	# LATIN SMALL LETTER I WITH TILDE
+  s/\&Itilde;|\&#?296;/\\~\{I\}/gs;	# LATIN CAPITAL LETTER I WITH TILDE
+  s/\&jcirc;|\&#?309;/\\\^\{\\j\}/gs;	# LATIN SMALL LETTER J WITH CIRCUMFLEX
+  s/\&Jcirc;|\&#?308;/\\\^\{J\}/gs;	# LATIN CAPITAL LETTER J WITH CIRCUMFLEX
+  s/\&kcedil;|\&#?311;/\\c\{k\}/gs;	# LATIN SMALL LETTER K WITH CEDILLA
+  s/\&Kcedil;|\&#?310;/\\c\{K\}/gs;	# LATIN CAPITAL LETTER K WITH CEDILLA
+  s/\&kgreen;|\&#?312;/\\textsc\{k\}/gs;	# LATIN SMALL LETTER KRA
+  s/\&lacute;|\&#?314;/\\'\{l\}/gs;	# LATIN SMALL LETTER L WITH ACUTE
+  s/\&Lacute;|\&#?313;/\\'\{L\}/gs;	# LATIN CAPITAL LETTER L WITH ACUTE
+  s/\&lcaron;|\&#?318;/\\v\{l\}/gs;	# LATIN SMALL LETTER L WITH CARON
+  s/\&Lcaron;|\&#?317;/\\v\{L\}/gs;	# LATIN CAPITAL LETTER L WITH CARON
+  s/\&lcedil;|\&#?316;/\\c\{l\}/gs;	# LATIN SMALL LETTER L WITH CEDILLA
+  s/\&Lcedil;|\&#?315;/\\c\{L\}/gs;	# LATIN CAPITAL LETTER L WITH CEDILLA
+  s/\&lmidot;|\&#?320;/\{\\lmidot\}/gs;	# LATIN SMALL LETTER L WITH MIDDLE DOT
+  s/\&Lmidot;|\&#?319;/\{\\Lmidot\}/gs;	# LATIN CAPITAL LETTER L WITH MIDDLE DOT
+  s/\&lstrok;|\&#?322;/\{\\l\}/gs;	# LATIN SMALL LETTER L WITH STROKE
+  s/\&Lstrok;|\&#?321;/\{\\L\}/gs;	# LATIN CAPITAL LETTER L WITH STROKE
+  s/\&nacute;|\&#?324;/\\'\{n\}/gs;	# LATIN SMALL LETTER N WITH ACUTE
+  s/\&Nacute;|\&#?323;/\\'\{N\}/gs;	# LATIN CAPITAL LETTER N WITH ACUTE
+  s/\&eng;|\&#?331;/\{\\ng\}/gs;	# LATIN SMALL LETTER ENG
+  s/\&ENG;|\&#?330;/\{\\NG\}/gs;	# LATIN CAPITAL LETTER ENG
+  s/\&napos;|\&#?329;/n\\kern-\.2em\\textsf\{'\}/gs;	# LATIN SMALL LETTER N PRECEDED BY APOSTROPHE
+  s/\&ncaron;|\&#?328;/\\v\{n\}/gs;	# LATIN SMALL LETTER N WITH CARON
+  s/\&Ncaron;|\&#?327;/\\v\{N\}/gs;	# LATIN CAPITAL LETTER N WITH CARON
+  s/\&ncedil;|\&#?326;/\\c\{n\}/gs;	# LATIN SMALL LETTER N WITH CEDILLA
+  s/\&Ncedil;|\&#?325;/\\c\{N\}/gs;	# LATIN CAPITAL LETTER N WITH CEDILLA
+  s/\&odblac;|\&#?337;/\\H\{o\}/gs;	# LATIN SMALL LETTER O WITH DOUBLE ACUTE
+  s/\&Odblac;|\&#?336;/\\H\{O\}/gs;	# LATIN CAPITAL LETTER O WITH DOUBLE ACUTE
+  s/\&Omacr;|\&#?332;/\\=\{O\}/gs;	# LATIN CAPITAL LETTER O WITH MACRON
+  s/\&omacr;|\&#?333;/\\=\{o\}/gs;	# LATIN SMALL LETTER O WITH MACRON
+  s/\&oelig;|\&#?339;/\{\\oe\}/gs;	# LATIN SMALL LIGATURE OE
+  s/\&OElig;|\&#?338;/\{\\OE\}/gs;	# LATIN CAPITAL LIGATURE OE
+  s/\&racute;|\&#?341;/\\'\{r\}/gs;	# LATIN SMALL LETTER R WITH ACUTE
+  s/\&Racute;|\&#?340;/\\'\{R\}/gs;	# LATIN CAPITAL LETTER R WITH ACUTE
+  s/\&rcaron;|\&#?345;/\\v\{r\}/gs;	# LATIN SMALL LETTER R WITH CARON
+  s/\&Rcaron;|\&#?344;/\\v\{R\}/gs;	# LATIN CAPITAL LETTER R WITH CARON
+  s/\&rcedil;|\&#?343;/\\c\{r\}/gs;	# LATIN SMALL LETTER R WITH CEDILLA
+  s/\&Rcedil;|\&#?342;/\\c\{R\}/gs;	# LATIN CAPITAL LETTER R WITH CEDILLA
+  s/\&sacute;|\&#?347;/\\'\{s\}/gs;	# LATIN SMALL LETTER S WITH ACUTE
+  s/\&Sacute;|\&#?346;/\\'\{S\}/gs;	# LATIN CAPITAL LETTER S WITH ACUTE
+  s/\&scaron;|\&#?353;/\\v\{s\}/gs;	# LATIN SMALL LETTER S WITH CARON
+  s/\&Scaron;|\&#?352;/\\v\{S\}/gs;	# LATIN CAPITAL LETTER S WITH CARON
+  s/\&scedil;|\&#?351;/\\c\{s\}/gs;	# LATIN SMALL LETTER S WITH CEDILLA
+  s/\&Scedil;|\&#?350;/\\c\{S\}/gs;	# LATIN CAPITAL LETTER S WITH CEDILLA
+  s/\&scirc;|\&#?349;/\\\^\{s\}/gs;	# LATIN SMALL LETTER S WITH CIRCUMFLEX
+  s/\&Scirc;|\&#?348;/\\\^\{S\}/gs;	# LATIN CAPITAL LETTER S WITH CIRCUMFLEX
+  s/\&tcaron;|\&#?357;/\\v\{t\}/gs;	# LATIN SMALL LETTER T WITH CARON
+  s/\&Tcaron;|\&#?356;/\\v\{T\}/gs;	# LATIN CAPITAL LETTER T WITH CARON
+  s/\&tcedil;|\&#?355;/\\c\{t\}/gs;	# LATIN SMALL LETTER T WITH CEDILLA
+  s/\&Tcedil;|\&#?354;/\\c\{T\}/gs;	# LATIN CAPITAL LETTER T WITH CEDILLA
+  s/\&tstrok;|\&#?359;/\{\\tstrok\}/gs;	# LATIN SMALL LETTER T WITH STROKE
+  s/\&Tstrok;|\&#?358;/\{\\Tstrok\}/gs;	# LATIN CAPITAL LETTER T WITH STROKE
+  s/\&ubreve;|\&#?365;/\\u\{u\}/gs;	# LATIN SMALL LETTER U WITH BREVE
+  s/\&Ubreve;|\&#?364;/\\u\{U\}/gs;	# LATIN CAPITAL LETTER U WITH BREVE
+  s/\&udblac;|\&#?369;/\\H\{u\}/gs;	# LATIN SMALL LETTER U WITH DOUBLE ACUTE
+  s/\&Udblac;|\&#?368;/\\H\{U\}/gs;	# LATIN CAPITAL LETTER U WITH DOUBLE ACUTE
+  s/\&umacr;|\&#?363;/\\=\{u\}/gs;	# LATIN SMALL LETTER U WITH MACRON
+  s/\&Umacr;|\&#?362;/\\=\{U\}/gs;	# LATIN CAPITAL LETTER U WITH MACRON
+  s/\&uogon;|\&#?371;/\\k\{u\}/gs;	# LATIN SMALL LETTER U WITH OGONEK
+  s/\&Uogon;|\&#?370;/\\k\{U\}/gs;	# LATIN CAPITAL LETTER U WITH OGONEK
+  s/\&uring;|\&#?367;/\\r\{u\}/gs;	# LATIN SMALL LETTER U WITH RING ABOVE
+  s/\&Uring;|\&#?366;/\\r\{U\}/gs;	# LATIN CAPITAL LETTER U WITH RING ABOVE
+  s/\&utilde;|\&#?361;/\\~\{u\}/gs;	# LATIN SMALL LETTER U WITH TILDE
+  s/\&Utilde;|\&#?360;/\\~\{U\}/gs;	# LATIN CAPITAL LETTER U WITH TILDE
+  s/\&wcirc;|\&#?373;/\\\^\{w\}/gs;	# LATIN SMALL LETTER W WITH CIRCUMFLEX
+  s/\&Wcirc;|\&#?372;/\\\^\{W\}/gs;	# LATIN CAPITAL LETTER W WITH CIRCUMFLEX
+  s/\&ycirc;|\&#?375;/\\\^\{y\}/gs;	# LATIN SMALL LETTER Y WITH CIRCUMFLEX
+  s/\&Ycirc;|\&#?374;/\\\^\{Y\}/gs;	# LATIN CAPITAL LETTER Y WITH CIRCUMFLEX
+  s/\&Yuml;|\&#?376;/\\"\{Y\}/gs;	# LATIN CAPITAL LETTER Y WITH DIAERESIS
+  s/\&zacute;|\&#?378;/\\'\{z\}/gs;	# LATIN SMALL LETTER Z WITH ACUTE
+  s/\&Zacute;|\&#?377;/\\'\{Z\}/gs;	# LATIN CAPITAL LETTER Z WITH ACUTE
+  s/\&zcaron;|\&#?382;/\\v\{z\}/gs;	# LATIN SMALL LETTER Z WITH CARON
+  s/\&Zcaron;|\&#?381;/\\v\{Z\}/gs;	# LATIN CAPITAL LETTER Z WITH CARON
+  s/\&zdot;|\&#?380;/\\\.\{z\}/gs;	# LATIN SMALL LETTER Z WITH DOT ABOVE
+  s/\&Zdot;|\&#?379;/\\\.\{Z\}/gs;	# LATIN CAPITAL LETTER Z WITH DOT ABOVE
+  s/\&acute;|\&#?180;/\\'\{\}/gs;	# ACUTE ACCENT
+  s/\&breve;|\&#?728;/\\u\{\}/gs;	# BREVE
+  s/\&caron;|\&#?711;/\\v\{\}/gs;	# CARON
+  s/\&cedil;|\&#?184;/\\c\{\}/gs;	# CEDILLA
+  s/\&circ;|\&#?94;/\\\^\{\}/gs;	# CIRCUMFLEX ACCENT
+  s/\&dblac;|\&#?733;/\\H\{\}/gs;	# DOUBLE ACUTE ACCENT
+  s/\&die;|\&#?168;/\\"\{\}/gs;	# DIAERESIS
+  s/\&dot;|\&#?729;/\\\.\{\}/gs;	# DOT ABOVE
+  s/\&grave;|\&#?96;/\\`\{\}/gs;	# GRAVE ACCENT
+  s/\&macr;|\&#?175;/\\=\{\}/gs;	# MACRON
+  s/\&ogon;|\&#?731;/\\k\{\}/gs;	# OGONEK
+  s/\&ring;|\&#?730;/\\r\{\}/gs;	# RING ABOVE
+  s/\&tilde;|\&#?126;/\\~\{\}/gs;	# TILDE
+  s/\&acy;|\&#?1072;/\{a\}/gs;	# CYRILLIC SMALL LETTER A
+  s/\&Acy;|\&#?1040;/\{A\}/gs;	# CYRILLIC CAPITAL LETTER A
+  s/\&bcy;|\&#?1073;/\{b\}/gs;	# CYRILLIC SMALL LETTER BE
+  s/\&Bcy;|\&#?1041;/\{B\}/gs;	# CYRILLIC CAPITAL LETTER BE
+  s/\&vcy;|\&#?1074;/\{v\}/gs;	# CYRILLIC SMALL LETTER VE
+  s/\&Vcy;|\&#?1042;/\{V\}/gs;	# CYRILLIC CAPITAL LETTER VE
+  s/\&gcy;|\&#?1075;/\{g\}/gs;	# CYRILLIC SMALL LETTER GHE
+  s/\&Gcy;|\&#?1043;/\{G\}/gs;	# CYRILLIC CAPITAL LETTER GHE
+  s/\&dcy;|\&#?1076;/\{d\}/gs;	# CYRILLIC SMALL LETTER DE
+  s/\&Dcy;|\&#?1044;/\{D\}/gs;	# CYRILLIC CAPITAL LETTER DE
+  s/\&iecy;|\&#?1077;/\{e\}/gs;	# CYRILLIC SMALL LETTER IE
+  s/\&IEcy;|\&#?1045;/\{E\}/gs;	# CYRILLIC CAPITAL LETTER IE
+  s/\&iocy;|\&#?1105;/\\"\{e\}/gs;	# CYRILLIC SMALL LETTER IO
+  s/\&IOcy;|\&#?1025;/\\"\{E\}/gs;	# CYRILLIC CAPITAL LETTER IO
+  s/\&zhcy;|\&#?1078;/\{zh\}/gs;	# CYRILLIC SMALL LETTER ZHE
+  s/\&ZHcy;|\&#?1046;/\{Zh\}/gs;	# CYRILLIC CAPITAL LETTER ZHE
+  s/\&zcy;|\&#?1079;/\{z\}/gs;	# CYRILLIC SMALL LETTER ZE
+  s/\&Zcy;|\&#?1047;/\{Z\}/gs;	# CYRILLIC CAPITAL LETTER ZE
+  s/\&icy;|\&#?1080;/\{i\}/gs;	# CYRILLIC SMALL LETTER I
+  s/\&Icy;|\&#?1048;/\{I\}/gs;	# CYRILLIC CAPITAL LETTER I
+  s/\&jcy;|\&#?1081;/\\u\{i\}/gs;	# CYRILLIC SMALL LETTER SHORT I
+  s/\&Jcy;|\&#?1049;/\\u\{I\}/gs;	# CYRILLIC CAPITAL LETTER SHORT I
+  s/\&kcy;|\&#?1082;/\{k\}/gs;	# CYRILLIC SMALL LETTER KA
+  s/\&Kcy;|\&#?1050;/\{K\}/gs;	# CYRILLIC CAPITAL LETTER KA
+  s/\&lcy;|\&#?1083;/\{l\}/gs;	# CYRILLIC SMALL LETTER EL
+  s/\&Lcy;|\&#?1051;/\{L\}/gs;	# CYRILLIC CAPITAL LETTER EL
+  s/\&mcy;|\&#?1084;/\{m\}/gs;	# CYRILLIC SMALL LETTER EM
+  s/\&Mcy;|\&#?1052;/\{M\}/gs;	# CYRILLIC CAPITAL LETTER EM
+  s/\&ncy;|\&#?1085;/\{n\}/gs;	# CYRILLIC SMALL LETTER EN
+  s/\&Ncy;|\&#?1053;/\{N\}/gs;	# CYRILLIC CAPITAL LETTER EN
+  s/\&ocy;|\&#?1086;/\{o\}/gs;	# CYRILLIC SMALL LETTER O
+  s/\&Ocy;|\&#?1054;/\{O\}/gs;	# CYRILLIC CAPITAL LETTER O
+  s/\&pcy;|\&#?1087;/\{p\}/gs;	# CYRILLIC SMALL LETTER PE
+  s/\&Pcy;|\&#?1055;/\{P\}/gs;	# CYRILLIC CAPITAL LETTER PE
+  s/\&rcy;|\&#?1088;/\{r\}/gs;	# CYRILLIC SMALL LETTER ER
+  s/\&Rcy;|\&#?1056;/\{R\}/gs;	# CYRILLIC CAPITAL LETTER ER
+  s/\&scy;|\&#?1089;/\{s\}/gs;	# CYRILLIC SMALL LETTER ES
+  s/\&Scy;|\&#?1057;/\{S\}/gs;	# CYRILLIC CAPITAL LETTER ES
+  s/\&tcy;|\&#?1090;/\{t\}/gs;	# CYRILLIC SMALL LETTER TE
+  s/\&Tcy;|\&#?1058;/\{T\}/gs;	# CYRILLIC CAPITAL LETTER TE
+  s/\&ucy;|\&#?1091;/\{u\}/gs;	# CYRILLIC SMALL LETTER U
+  s/\&Ucy;|\&#?1059;/\{U\}/gs;	# CYRILLIC CAPITAL LETTER U
+  s/\&fcy;|\&#?1092;/\{f\}/gs;	# CYRILLIC SMALL LETTER EF
+  s/\&Fcy;|\&#?1060;/\{F\}/gs;	# CYRILLIC CAPITAL LETTER EF
+  s/\&khcy;|\&#?1093;/\{kh\}/gs;	# CYRILLIC SMALL LETTER HA
+  s/\&KHcy;|\&#?1061;/\{Kh\}/gs;	# CYRILLIC CAPITAL LETTER HA
+  s/\&tscy;|\&#?1094;/\{ts\}/gs;	# CYRILLIC SMALL LETTER TSE
+  s/\&TScy;|\&#?1062;/\{Ts\}/gs;	# CYRILLIC CAPITAL LETTER TSE
+  s/\&chcy;|\&#?1095;/\{ch\}/gs;	# CYRILLIC SMALL LETTER CHE
+  s/\&CHcy;|\&#?1063;/\{Ch\}/gs;	# CYRILLIC CAPITAL LETTER CHE
+  s/\&shcy;|\&#?1096;/\{sh\}/gs;	# CYRILLIC SMALL LETTER SHA
+  s/\&SHcy;|\&#?1064;/\{Sh\}/gs;	# CYRILLIC CAPITAL LETTER SHA
+  s/\&shchcy;|\&#?1097;/\{shch\}/gs;	# CYRILLIC SMALL LETTER SHCHA
+  s/\&SHCHcy;|\&#?1065;/\{Shch\}/gs;	# CYRILLIC CAPITAL LETTER SHCHA
+  s/\&hardcy;|\&#?1098;/\{\\cdprime\}/gs;	# CYRILLIC SMALL LETTER HARD SIGN
+  s/\&HARDcy;|\&#?1066;/\{\\Cdprime\}/gs;	# CYRILLIC CAPITAL LETTER HARD SIGN
+  s/\&ycy;|\&#?1099;/\{y\}/gs;	# CYRILLIC SMALL LETTER YERU
+  s/\&Ycy;|\&#?1067;/\{Y\}/gs;	# CYRILLIC CAPITAL LETTER YERU
+  s/\&softcy;|\&#?1100;/\{\\cprime\}/gs;	# CYRILLIC SMALL LETTER SOFT SIGN
+  s/\&SOFTcy;|\&#?1068;/\{\\Cprime\}/gs;	# CYRILLIC CAPITAL LETTER SOFT SIGN
+  s/\&ecy;|\&#?1101;/\\`\{e\}/gs;	# CYRILLIC SMALL LETTER E
+  s/\&Ecy;|\&#?1069;/\\`\{E\}/gs;	# CYRILLIC CAPITAL LETTER E
+  s/\&yucy;|\&#?1102;/\{yu\}/gs;	# CYRILLIC SMALL LETTER YU
+  s/\&YUcy;|\&#?1070;/\{Yu\}/gs;	# CYRILLIC CAPITAL LETTER YU
+  s/\&yacy;|\&#?1103;/\{ya\}/gs;	# CYRILLIC SMALL LETTER YA
+  s/\&YAcy;|\&#?1071;/\{Ya\}/gs;	# CYRILLIC CAPITAL LETTER YA
+  s/\&numero;|\&#?8470;/\{N0\}/gs;	# NUMERO SIGN
+  s/\&djcy;|\&#?1106;/\{dj\}/gs;	# CYRILLIC SMALL LETTER DJE
+  s/\&DJcy;|\&#?1026;/\{Dj\}/gs;	# CYRILLIC CAPITAL LETTER DJE
+  s/\&gjcy;|\&#?1107;/\{\\'g\}/gs;	# CYRILLIC SMALL LETTER GJE
+  s/\&GJcy;|\&#?1027;/\{\\'G\}/gs;	# CYRILLIC CAPITAL LETTER GJE
+  s/\&jukcy;|\&#?1108;/\{\\=e\}/gs;	# CYRILLIC SMALL LETTER UKRAINIAN IE
+  s/\&Jukcy;|\&#?1028;/\{\\=E\}/gs;	# CYRILLIC CAPITAL LETTER UKRAINIAN IE
+  s/\&dscy;|\&#?1109;/\{\\dz\}/gs;	# CYRILLIC SMALL LETTER DZE
+  s/\&DScy;|\&#?1029;/\{\\Dz\}/gs;	# CYRILLIC CAPITAL LETTER DZE
+  s/\&iukcy;|\&#?1110;/\{\\=\\i\}/gs;	# CYRILLIC SMALL LETTER BYELORUSSIAN-UKRAINIAN I
+  s/\&Iukcy;|\&#?1030;/\{\\=I\}/gs;	# CYRILLIC CAPITAL LETTER BYELORUSSIAN-UKRAINIAN I
+  s/\&yicy;|\&#?1111;/\{\\"\\i\}/gs;	# CYRILLIC SMALL LETTER YI
+  s/\&YIcy;|\&#?1031;/\{\\"I\}/gs;	# CYRILLIC CAPITAL LETTER YI
+  s/\&jsercy;|\&#?1112;/\{j\}/gs;	# CYRILLIC SMALL LETTER JE
+  s/\&Jsercy;|\&#?1032;/\{J\}/gs;	# CYRILLIC CAPITAL LETTER JE
+  s/\&ljcy;|\&#?1113;/\{lj\}/gs;	# CYRILLIC SMALL LETTER LJE
+  s/\&LJcy;|\&#?1033;/\{Lj\}/gs;	# CYRILLIC CAPITAL LETTER LJE
+  s/\&njcy;|\&#?1114;/\{nj\}/gs;	# CYRILLIC SMALL LETTER NJE
+  s/\&NJcy;|\&#?1034;/\{Nj\}/gs;	# CYRILLIC CAPITAL LETTER NJE
+  s/\&tshcy;|\&#?1115;/\{\\'c\}/gs;	# CYRILLIC SMALL LETTER TSHE
+  s/\&TSHcy;|\&#?1035;/\{\\'C\}/gs;	# CYRILLIC CAPITAL LETTER TSHE
+  s/\&kjcy;|\&#?1116;/\{\\'k\}/gs;	# CYRILLIC SMALL LETTER KJE
+  s/\&KJcy;|\&#?1036;/\{\\'K\}/gs;	# CYRILLIC CAPITAL LETTER KJE
+  s/\&ubrcy;|\&#?1118;/\\u\{u\}/gs;	# CYRILLIC SMALL LETTER SHORT U
+  s/\&Ubrcy;|\&#?1038;/\\u\{U\}/gs;	# CYRILLIC CAPITAL LETTER SHORT U
+  s/\&dzcy;|\&#?1119;/\{\\dzh\}/gs;	# CYRILLIC SMALL LETTER DZHE
+  s/\&DZcy;|\&#?1039;/\{\\Dzh\}/gs;	# CYRILLIC CAPITAL LETTER DZHE
+  s/\&agr;|\&#?945;/\{a\}/gs;	# GREEK SMALL LETTER ALPHA
+  s/\&Agr;|\&#?913;/\{A\}/gs;	# GREEK CAPITAL LETTER ALPHA
+  s/\&bgr;|\&#?946;/\{b\}/gs;	# GREEK SMALL LETTER BETA
+  s/\&Bgr;|\&#?914;/\{B\}/gs;	# GREEK CAPITAL LETTER BETA
+  s/\&ggr;|\&#?947;/\{g\}/gs;	# GREEK SMALL LETTER GAMMA
+  s/\&Ggr;|\&#?915;/\{G\}/gs;	# GREEK CAPITAL LETTER GAMMA
+  s/\&dgr;|\&#?948;/\{d\}/gs;	# GREEK SMALL LETTER DELTA
+  s/\&Dgr;|\&#?916;/\{D\}/gs;	# GREEK CAPITAL LETTER DELTA
+  s/\&egr;|\&#?949;/\{e\}/gs;	# GREEK SMALL LETTER EPSILON
+  s/\&Egr;|\&#?917;/\{E\}/gs;	# GREEK CAPITAL LETTER EPSILON
+  s/\&zgr;|\&#?950;/\{z\}/gs;	# GREEK SMALL LETTER ZETA
+  s/\&Zgr;|\&#?918;/\{Z\}/gs;	# GREEK CAPITAL LETTER ZETA
+  s/\&eegr;|\&#?951;/\{h\}/gs;	# GREEK SMALL LETTER ETA
+  s/\&EEgr;|\&#?919;/\{H\}/gs;	# GREEK CAPITAL LETTER ETA
+  s/\&thgr;|\&#?952;/\{j\}/gs;	# GREEK SMALL LETTER THETA
+  s/\&THgr;|\&#?920;/\{J\}/gs;	# GREEK CAPITAL LETTER THETA
+  s/\&igr;|\&#?953;/\{i\}/gs;	# GREEK SMALL LETTER IOTA
+  s/\&Igr;|\&#?921;/\{I\}/gs;	# GREEK CAPITAL LETTER IOTA
+  s/\&kgr;|\&#?954;/\{k\}/gs;	# GREEK SMALL LETTER KAPPA
+  s/\&Kgr;|\&#?922;/\{K\}/gs;	# GREEK CAPITAL LETTER KAPPA
+  s/\&lgr;|\&#?955;/\{l\}/gs;	# GREEK SMALL LETTER LAMDA
+  s/\&Lgr;|\&#?923;/\{L\}/gs;	# GREEK CAPITAL LETTER LAMDA
+  s/\&mgr;|\&#?956;/\{m\}/gs;	# GREEK SMALL LETTER MU
+  s/\&Mgr;|\&#?924;/\{M\}/gs;	# GREEK CAPITAL LETTER MU
+  s/\&ngr;|\&#?957;/\{n\}/gs;	# GREEK SMALL LETTER NU
+  s/\&Ngr;|\&#?925;/\{N\}/gs;	# GREEK CAPITAL LETTER NU
+  s/\&xgr;|\&#?958;/\{x\}/gs;	# GREEK SMALL LETTER XI
+  s/\&Xgr;|\&#?926;/\{X\}/gs;	# GREEK CAPITAL LETTER XI
+  s/\&ogr;|\&#?959;/\{o\}/gs;	# GREEK SMALL LETTER OMICRON
+  s/\&Ogr;|\&#?927;/\{O\}/gs;	# GREEK CAPITAL LETTER OMICRON
+  s/\&pgr;|\&#?960;/\{p\}/gs;	# GREEK SMALL LETTER PI
+  s/\&Pgr;|\&#?928;/\{P\}/gs;	# GREEK CAPITAL LETTER PI
+  s/\&rgr;|\&#?961;/\{r\}/gs;	# GREEK SMALL LETTER RHO
+  s/\&Rgr;|\&#?929;/\{P\}/gs;	# GREEK CAPITAL LETTER RHO
+  s/\&sgr;|\&#?963;/\{s\}/gs;	# GREEK SMALL LETTER SIGMA
+  s/\&Sgr;|\&#?931;/\{S\}/gs;	# GREEK CAPITAL LETTER SIGMA
+  s/\&sfgr;|\&#?962;/\{c\}/gs;	# GREEK SMALL LETTER FINAL SIGMA
+  s/\&tgr;|\&#?964;/\{t\}/gs;	# GREEK SMALL LETTER TAU
+  s/\&Tgr;|\&#?932;/\{T\}/gs;	# GREEK CAPITAL LETTER TAU
+  s/\&ugr;|\&#?965;/\{u\}/gs;	# GREEK SMALL LETTER UPSILON
+  s/\&Ugr;|\&#?933;/\{Y\}/gs;	# GREEK CAPITAL LETTER UPSILON
+  s/\&phgr;|\&#?966;/\{f\}/gs;	# GREEK SMALL LETTER PHI
+  s/\&PHgr;|\&#?934;/\{F\}/gs;	# GREEK CAPITAL LETTER PHI
+  s/\&khgr;|\&#?967;/\{q\}/gs;	# GREEK SMALL LETTER CHI
+  s/\&KHgr;|\&#?935;/\{X\}/gs;	# GREEK CAPITAL LETTER CHI
+  s/\&psgr;|\&#?968;/\{y\}/gs;	# GREEK SMALL LETTER PSI
+  s/\&PSgr;|\&#?936;/\{Y\}/gs;	# GREEK CAPITAL LETTER PSI
+  s/\&ohgr;|\&#?969;/\{w\}/gs;	# GREEK SMALL LETTER OMEGA
+  s/\&OHgr;|\&#?937;/\{W\}/gs;	# GREEK CAPITAL LETTER OMEGA
+  s/\&aacgr;|\&#?940;/\{'a\}/gs;	# GREEK SMALL LETTER ALPHA WITH TONOS
+  s/\&Aacgr;|\&#?902;/\{'A\}/gs;	# GREEK CAPITAL LETTER ALPHA WITH TONOS
+  s/\&eacgr;|\&#?941;/\{'e\}/gs;	# GREEK SMALL LETTER EPSILON WITH TONOS
+  s/\&Eacgr;|\&#?904;/\{'E\}/gs;	# GREEK CAPITAL LETTER EPSILON WITH TONOS
+  s/\&eeacgr;|\&#?942;/\{'h\}/gs;	# GREEK SMALL LETTER ETA WITH TONOS
+  s/\&EEacgr;|\&#?905;/\{'H\}/gs;	# GREEK CAPITAL LETTER ETA WITH TONOS
+  s/\&idigr;|\&#?970;/\{"i\}/gs;	# GREEK SMALL LETTER IOTA WITH DIALYTIKA
+  s/\&Idigr;|\&#?938;/\{"I\}/gs;	# GREEK CAPITAL LETTER IOTA WITH DIALYTIKA
+  s/\&iacgr;|\&#?943;/\{'i\}/gs;	# GREEK SMALL LETTER IOTA WITH TONOS
+  s/\&Iacgr;|\&#?906;/\{'I\}/gs;	# GREEK CAPITAL LETTER IOTA WITH TONOS
+  s/\&idiagr;|\&#?912;/\{"'i\}/gs;	# GREEK SMALL LETTER IOTA WITH DIALYTIKA AND TONOS
+  s/\&oacgr;|\&#?972;/\{'o\}/gs;	# GREEK SMALL LETTER OMICRON WITH TONOS
+  s/\&Oacgr;|\&#?908;/\{'O\}/gs;	# GREEK CAPITAL LETTER OMICRON WITH TONOS
+  s/\&udigr;|\&#?971;/\{"u\}/gs;	# GREEK SMALL LETTER UPSILON WITH DIALYTIKA
+  s/\&Udigr;|\&#?939;/\{"U\}/gs;	# GREEK CAPITAL LETTER UPSILON WITH DIALYTIKA
+  s/\&uacgr;|\&#?973;/\{'u\}/gs;	# GREEK SMALL LETTER UPSILON WITH TONOS
+  s/\&Uacgr;|\&#?910;/\{'U\}/gs;	# GREEK CAPITAL LETTER UPSILON WITH TONOS
+  s/\&udiagr;|\&#?944;/\{"'u\}/gs;	# GREEK SMALL LETTER UPSILON WITH DIALYTIKA AND TONOS
+  s/\&ohacgr;|\&#?974;/\{'w\}/gs;	# GREEK SMALL LETTER OMEGA WITH TONOS
+  s/\&OHacgr;|\&#?911;/\{'W\}/gs;	# GREEK CAPITAL LETTER OMEGA WITH TONOS
+  s/\&Tab;|\&9;/\\>,\\=/gs;	# HORIZONTAL TABULATION
+  s/\&NewLine;|\&#?10;/\\\\/gs;	# LINE FEED
+  s/\&lsaquo;|\&#?8249;/\{\\guilsinglleft\}/gs;	# SINGLE LEFT-POINTING ANGLE QUOTATION MARK
+  s/\&rsaquo;|\&#?8250;/\{\\guilsinglright\}/gs;	# SINGLE RIGHT-POINTING ANGLE QUOTATION MARK
+  s/\&oline;|\&#?8254;/\\=\{\}/gs;	# OVERLINE
+  s/\&frasl;|\&#?8260;/\{\\textfractionsolidus\}/gs;	# FRACTION SLASH
+  s/\&euro;|\&#?8364;/\{\\texteuro\}/gs;	# EURO SIGN
+  s/\&hoarr;/\$\\leftrightarrowtriangle\$/gs;
+  s/\&lbarr;|\&#?8672;/\$\\dashleftarrow\$/gs;	# LEFTWARDS DASHED ARROW
+  s/\&loarr;/\$\\leftarrowtriangle\$/gs;
+  s/\&rbarr;|\&#?8674;/\$\\dashrightarrow\$/gs;	# RIGHTWARDS DASHED ARROW
+  s/\&roarr;/\$\\rightarrowtriangle\$/gs;
+  s/\&slarr;/\$\\shortleftarrow\$/gs;
+  s/\&srarr;/\$\\shortrightarrow\$/gs;
+  s/\&xlarr;/\$\\longleftarrow\$/gs;
+  s/\&xmap;/\$\\longmapsto\$/gs;
+  s/\&xrarr;/\$\\longrightarrow\$/gs;
+  s/\&bsolb;/\$\\boxbslash\$/gs;
+  s/\&ogt;/\$\\ogreaterthan\$/gs;
+  s/\&ohbar;/\$\\minuso\$/gs;
+  s/\&olcir;/\$\\varocircle\$/gs;
+  s/\&olt;/\$\\olessthan\$/gs;
+  s/\&ovbar;/\$\\obar\$/gs;
+  s/\&solb;/\$\\boxslash\$/gs;
+  s/\&xcap;/\$\\bigcap\$/gs;
+  s/\&xcup;/\$\\bigcup\$/gs;
+  s/\&xodot;/\$\\bigodot\$/gs;
+  s/\&xoplus;/\$\\bigoplus\$/gs;
+  s/\&xotime;/\$\\bigotimes\$/gs;
+  s/\&xsqcup;/\$\\bigsqcup\$/gs;
+  s/\&xuplus;/\$\\biguplus\$/gs;
+  s/\&xvee;/\$\\bigvee\$/gs;
+  s/\&xwedge;/\$\\bigwedge\$/gs;
+  s/\&lmoust;/\$\\lmoustache\$/gs;
+  s/\&lparlt;/\$\\rlap\{\$<\$\}\\;\(\$/gs;
+  s/\&rmoust;/\$\\rmoustache\$/gs;
+  s/\&emptyv;/\$\\varnothing\$/gs;
+  s/\&mho;|\&#?8487;/\{\\textmho\}/gs;	# INVERTED OHM SIGN
+  s/\&plankv;/\$\\hslash\$/gs;
+  s/\&Colon;|\&#?8759;/\$::\$/gs;	# PROPORTION
+  s/\&Colone;/\$::=\$/gs;
+  s/\&gla;/\$><\$/gs;
+  s/\&glj;/\$\\rlap\{\$>\$\}\\!<\$/gs;
+  s/\&gtcc;/\$\\rightslice\$/gs;
+  s/\&ltcc;/\$\\leftslice\$/gs;
+  s/\&afr;/\$a\$/gs;
+  s/\&Afr;/\$A\$/gs;
+  s/\&bfr;/\$b\$/gs;
+  s/\&Bfr;/\$B\$/gs;
+  s/\&cfr;/\$c\$/gs;
+  s/\&Cfr;/\$C\$/gs;
+  s/\&dfr;/\$d\$/gs;
+  s/\&Dfr;/\$D\$/gs;
+  s/\&efr;/\$e\$/gs;
+  s/\&Efr;/\$E\$/gs;
+  s/\&ffr;/\$f\$/gs;
+  s/\&Ffr;/\$F\$/gs;
+  s/\&gfr;/\$g\$/gs;
+  s/\&Gfr;/\$G\$/gs;
+  s/\&hfr;/\$h\$/gs;
+  s/\&Hfr;/\$H\$/gs;
+  s/\&ifr;/\$i\$/gs;
+  s/\&Ifr;/\$I\$/gs;
+  s/\&jfr;/\$j\$/gs;
+  s/\&Jfr;/\$J\$/gs;
+  s/\&kfr;/\$k\$/gs;
+  s/\&Kfr;/\$K\$/gs;
+  s/\&lfr;/\$l\$/gs;
+  s/\&Lfr;/\$L\$/gs;
+  s/\&mfr;/\$m\$/gs;
+  s/\&Mfr;/\$M\$/gs;
+  s/\&nfr;/\$n\$/gs;
+  s/\&Nfr;/\$N\$/gs;
+  s/\&ofr;/\$o\$/gs;
+  s/\&Ofr;/\$O\$/gs;
+  s/\&pfr;/\$p\$/gs;
+  s/\&Pfr;/\$P\$/gs;
+  s/\&qfr;/\$q\$/gs;
+  s/\&Qfr;/\$Q\$/gs;
+  s/\&rfr;/\$r\$/gs;
+  s/\&Rfr;/\$R\$/gs;
+  s/\&sfr;/\$s\$/gs;
+  s/\&Sfr;/\$S\$/gs;
+  s/\&tfr;/\$t\$/gs;
+  s/\&Tfr;/\$T\$/gs;
+  s/\&ufr;/\$u\$/gs;
+  s/\&Ufr;/\$U\$/gs;
+  s/\&vfr;/\$v\$/gs;
+  s/\&Vfr;/\$V\$/gs;
+  s/\&wfr;/\$w\$/gs;
+  s/\&Wfr;/\$W\$/gs;
+  s/\&xfr;/\$x\$/gs;
+  s/\&Xfr;/\$X\$/gs;
+  s/\&yfr;/\$y\$/gs;
+  s/\&Yfr;/\$Y\$/gs;
+  s/\&zfr;/\$z\$/gs;
+  s/\&Zfr;/\$Z\$/gs;
+  s/\&Aopf;/\$A\$/gs;
+  s/\&Bopf;/\$B\$/gs;
+  s/\&Copf;/\$C\$/gs;
+  s/\&Dopf;/\$D\$/gs;
+  s/\&Eopf;/\$E\$/gs;
+  s/\&Fopf;/\$F\$/gs;
+  s/\&Gopf;/\$G\$/gs;
+  s/\&Hopf;/\$H\$/gs;
+  s/\&Iopf;/\$I\$/gs;
+  s/\&Jopf;/\$J\$/gs;
+  s/\&Kopf;/\$K\$/gs;
+  s/\&Lopf;/\$L\$/gs;
+  s/\&Mopf;/\$M\$/gs;
+  s/\&Nopf;/\$N\$/gs;
+  s/\&Oopf;/\$O\$/gs;
+  s/\&Popf;/\$P\$/gs;
+  s/\&Qopf;/\$Q\$/gs;
+  s/\&Ropf;/\$R\$/gs;
+  s/\&Sopf;/\$S\$/gs;
+  s/\&Topf;/\$T\$/gs;
+  s/\&Uopf;/\$U\$/gs;
+  s/\&Vopf;/\$V\$/gs;
+  s/\&Wopf;/\$W\$/gs;
+  s/\&Xopf;/\$X\$/gs;
+  s/\&Yopf;/\$Y\$/gs;
+  s/\&Zopf;/\$Z\$/gs;
+  s/\&Ascr;/\$A\$/gs;
+  s/\&Bscr;/\$B\$/gs;
+  s/\&Cscr;/\$C\$/gs;
+  s/\&Dscr;/\$D\$/gs;
+  s/\&Escr;/\$E\$/gs;
+  s/\&Fscr;/\$F\$/gs;
+  s/\&Gscr;/\$G\$/gs;
+  s/\&Hscr;/\$H\$/gs;
+  s/\&Iscr;/\$I\$/gs;
+  s/\&Jscr;/\$J\$/gs;
+  s/\&Kscr;/\$K\$/gs;
+  s/\&Lscr;/\$L\$/gs;
+  s/\&Mscr;/\$M\$/gs;
+  s/\&Nscr;/\$N\$/gs;
+  s/\&Oscr;/\$O\$/gs;
+  s/\&Pscr;/\$P\$/gs;
+  s/\&Qscr;/\$Q\$/gs;
+  s/\&Rscr;/\$R\$/gs;
+  s/\&Sscr;/\$S\$/gs;
+  s/\&Tscr;/\$T\$/gs;
+  s/\&Uscr;/\$U\$/gs;
+  s/\&Vscr;/\$V\$/gs;
+  s/\&Wscr;/\$W\$/gs;
+  s/\&Xscr;/\$X\$/gs;
+  s/\&Yscr;/\$Y\$/gs;
+  s/\&Zscr;/\$Z\$/gs;
+  s/\&acd;/\$\\AC\$/gs;
+  s/\&andand;/\$\\merge\$/gs;
+  s/\&ctdot;/\$\\cdots\$/gs;
+  s/\&dtdot;/\$\\ddots\$/gs;
+  s/\&Int;/\$\\int\\!\\!\\!\\int\$/gs;
+  s/\&isins;/\$\\inplus\$/gs;
+  s/\&lobrk;|\&#?12314;/\{\\textlbrackdbl\}/gs;	# LEFT WHITE SQUARE BRACKET
+  s/\&nis;/\$\\niplus\$/gs;
+  s/\&pertenk;|\&#?8241;/\{\\textpertenthousand\}/gs;	# PER TEN THOUSAND SIGN
+  s/\&qint;/\$\\int\\!\\!\\!\\int\\!\\!\\!\\int\\!\\!\\!\\int\$/gs;
+  s/\&robrk;|\&#?12315;/\{\\textrbrackdbl\}/gs;	# RIGHT WHITE SQUARE BRACKET
+  s/\&ropar;/\$\\rrparenthesis\$/gs;
+  s/\&tint;/\$\\int\\!\\!\\!\\int\\!\\!\\!\\int\$/gs;
+  s/&/\\&/gs;
+  s/#/\\#/gs;
+  
+  return $_;
+}
+
+__END__

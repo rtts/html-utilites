@@ -1,0 +1,49 @@
+#!/usr/bin/awk -f 
+# This program justifies text to both margins (preprocess with align)
+
+# The function hussle() will be used to distribute spaces randomly
+# It takes  an  array of strings  and randomizes  their order,  by
+# swapping each element with a random other element:
+
+function hussle(array,size,     i,swap,with) {
+  for ( i=1; i<=size; i++) {
+    swap=array[i]
+    with=int( ((rand()*size)+1) )
+    array[i]=array[with]
+    array[with]=swap
+  }
+}
+
+BEGIN { cols=78 }
+
+{
+if (line!="") {
+  ll=length(line)
+  if (NF==0 || ll>=cols) print line
+  else {
+    toAdd=(cols-ll)
+    j=split(line,w," ")
+    nrSpaces=j-1
+    if (j>1) minimum=int( (toAdd/nrSpaces) )
+    remain=toAdd-(minimum*nrSpaces)
+    for (k=1;k<=nrSpaces;k++) {
+      for (m=1;m<=minimum;m++) {
+        spaces[k]=spaces[k]" "
+      }
+    }
+    for (k=1;k<=remain;k++) {
+      spaces[k]=spaces[k]" "
+    }
+    hussle(spaces,nrSpaces)
+    for (k=1;k<=nrSpaces;k++) {
+      printf w[k] " " spaces[k]
+    }
+    print w[j]
+    delete spaces
+  }
+}
+else if (NR>1) print ""
+line=$0
+}
+
+END { print line }
